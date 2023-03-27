@@ -1,0 +1,481 @@
+---
+title: "(PB746) Progression curve plotting of deterministic and stochastic model (incl. Roguing effect)"
+output: html_notebook
+---
+
+```{r}
+rm(list=ls(all=TRUE))
+```
+
+This code can be used exclusively, no need to refer from previous codes.
+
+#Part 1: deterministic model for reference
+```{r det model construction and sinulation}
+library(deSolve)
+RTD.determin.withrogue.model <- function (t, x, params) {
+  X<- x[1] #susceptible
+  Y<- x[2] #infected by virus 1 (RTBV)
+  Z<- x[3] #infected by virus 2 (RTSV)
+  U<- x[4] #infected by both viruses #no need to define K
+  with(
+    as.list(params),
+    {
+      P<- Y+Z+U+X 
+      dX<- r*(K-P) - p1*(Y+s1*U)*X - p2*(Z+s2*U)*X - p5*U*X - q*X 
+      d1 <- d/(((1/e1)-(1/2))*g)  #g is gap between roguing #e is the efficiency of roguing
+      d2 <- d/(((1/e2)-(1/2))*g)
+      d3 <- d/(((1/e3)-(1/2))*g)
+      dY<- p1*(Y+s1*U)*X  - p2*(Z+s2*U)*Y - m*Y- d1*Y
+      dZ<- p2*(Z+s2*U)*X- p1*(Y+s1*U)*Z - n*Z - d2*Z 
+      dU<-  p2*(Z+s2*U)*Y  + p1*(Y+s1*U)*Z + p5*U*X -w*U - d3*U 
+      res<- c(dX,dY,dZ,dU)
+      list(res)
+    }
+  )
+}
+
+Determ_output<-NULL
+K<-10000
+X0 <- 1000
+Y0 <- 10
+Z0 <- 10
+U0 <- 1
+times <- seq(0,500,by=1/365)
+xstart_dem <- c(X=X0,Y=Y0,Z=Z0,U=U0)
+noRogue <- FALSE
+if (noRogue){
+  params <- c(K=K,r=0.001,p1=0.09/(K/9),p2=0.13/(K/9),p5=0.16/(K/9),q=0.0080,m=0.0125,n=0.0090,w=0.0250,s1=1.7,s2=0.7,d=0,e1=0.7,e2=0,e3=1,g=365) #notice d=0 
+}else{
+  params <- c(K=K,r=0.001,p1=0.08/(K/9),p2=0.125/(K/9),p5=0.086/(K/9),q=0.0080,m=0.0125,n=0.0090,w=0.0250,s1=0.75,s2=0.5,d=1,e1=0.7,e2=0,e3=1,g=365/3)
+}
+
+Determ_output <- as.data.frame(lsoda(xstart_dem,times,RTD.determin.withrogue.model,params))
+#out <- as.data.frame(lsoda(xstart,times,Zhangmodel,params))
+
+Determ_output["P"]<- rowSums(Determ_output)-Determ_output["time"]
+compare135_trial1<-Determ_output[which(Determ_output["time"]==135),]
+
+
+```
+
+```{r plot det output}
+library(ggplot2)
+colors <- c("X"= "black", "Y"= "red", "Z"="forestgreen", "U"="blue")
+Udet135<-Determ_output[which(Determ_output["time"]==135),"U"]/Determ_output[which(Determ_output["time"]==135),"P"]
+Udet135<- round(Udet135,digits = 3)
+Udet500<-Determ_output[which(Determ_output["time"]==500),"U"]/Determ_output[which(Determ_output["time"]==500),"P"]
+Udet500<- round(Udet500,digits = 3)
+ggplot(data = Determ_output) +
+  geom_line(mapping = aes(times, X/P,col= "X"))+
+  geom_line(mapping = aes(times, Y/P,col= "Y"))+
+  geom_line(mapping = aes(times, Z/P,col= "Z"))+
+  geom_line(mapping = aes(times, U/P,col= "U"))+
+  labs(x ='Time (days)', title = "Deterministic model outcome of default parameter ", subtitle = "the same parameters as in default stochastic model used", colour = "Compartment", x = "Time (days)", y ="Proportion in current population")+
+  scale_color_manual(values = colors)+
+  theme_bw()+
+  ylim(0,1)+
+  geom_point(aes(x = 135, y = Udet135), shape =1)+
+  geom_vline(aes(xintercept = 135), linetype = 2)+
+  annotate(geom = "text", x = 175, y = Udet135+0.02, label = print(paste0("U135 =" ,Udet135)) , size = 3)+
+  geom_point(aes(x = 500, y = Udet500), shape =1)+
+  geom_vline(aes(xintercept = 500), linetype = 2)+
+  annotate(geom = "text", x = 460, y = Udet500-0.02, label = print(paste0("U500 =" ,Udet500)), size = 3)
+  # geom_point(aes(x = 135, y = U135mean))+
+  # geom_vline(aes(xintercept = 135), linetype = 2)+
+  # #annotate(geom = "text", x = 175, y = 0.60, label = print(paste0("U135 =" ,U135mean)) , size = 3)+
+  # geom_point(aes(x = 500, y = U500))+
+  # geom_vline(aes(xintercept = 500), linetype = 2)+
+  # #annotate(geom = "text", x = 460, y = 0.53, label = print(paste0("U500 =" ,U500)), size = 3)+
+  # geom_point(aes(x = 135, y = Udet135), shape =1, col = "purple")+
+  # #annotate(geom = "text", x = 175, y = 0.60, label = print(paste0("U135 =" ,Udet135)) , size = 3)+
+  # geom_point(aes(x = 500, y = Udet500), shape =1, col = "purple")
+  # #annotate(geom = "text", x = 460, y = 0.53, label = print(paste0("U500 =" ,Udet500)), size = 3)
+
+```
+
+Part 2.0: Create a stochastic model for RTD that take into account roguing at rate di, the efficiciency is = 1 for U, 0.7 for Y and 0 for Z. The g is the gap between roguing.
+Our condition for roguing
+```{r stochastic model construction}
+RTD.b.d.rogue.onestep <- function (x, params) {
+  X <- x[2] # x[1] will be time
+  Y <- x[3]
+  Z <- x[4]
+  U <- x[5]
+  P <- X+Y+Z+U 
+  with(
+    as.list(params),
+    {
+      d1 <- d/(((1/e1)-(1/2))*g)  #g is gap between roguing #e is the efficiency of roguing #d is 0 or 1 representing if roguing is done or not
+      d2 <- d/(((1/e2)-(1/2))*g)
+      d3 <- d/(((1/e3)-(1/2))*g)
+      total.rate <- r*(K-P) + p1*(Y+s1*U)*X + p2*(Z+s2*U)*X + p5*U*X + p2*(Z+s2*U)*Y + m*Y + p1*(Y+s1*U)*Z + n*Z + w*U + q*X + d1*Y + d2*Z + d3*U   #every term, non-repeated
+      new.t <- rexp(n=1,rate=total.rate) #new timepoint is randomly selected with a exponential probability with the rate of total rate
+      new.xyzu<- c(X,Y,Z,U) #the first X Y Z U
+      Xadd <- r*(K-P) 
+      Zgone <- n*Z 
+      Ygone <- m*Y
+      Ugone <- w*U
+      XtoZ <- p2*(Z+s2*U)*X
+      XtoY <- p1*(Y+s1*U)*X
+      XtoU <- p5*U*X
+      YtoU <- p2*(Z+s2*U)*Y  
+      ZtoU <- p1*(Y+s1*U)*Z
+      Xgone <- q*X 
+      Yrogued <- d1*Y #new
+      Zrogued <- d2*Z #new
+      Urogued <- d3*U #new
+      realProbEvent <- c(Xadd,Zgone,Ygone,Ugone,XtoZ,XtoY,XtoU,YtoU,ZtoU,Xgone,Yrogued,Zrogued,Urogued)
+      e <- sample(x=1:13,size = 1,prob=realProbEvent) #e is a random number # 1:13
+      if(e == 1)
+        new.xyzu<- c(X+1,Y,Z,U)
+      if(e == 2)
+        new.xyzu<- c(X,Y,Z-1,U)
+      if(e == 3)
+        new.xyzu<- c(X,Y-1,Z,U)
+      if(e == 4)
+        new.xyzu<- c(X,Y,Z,U-1)
+      if(e == 5)
+        new.xyzu<- c(X-1,Y,Z+1,U)
+      if(e == 6)
+        new.xyzu<- c(X-1,Y+1,Z,U)
+      if(e == 7)
+        new.xyzu<- c(X-1,Y,Z,U+1)
+      if(e == 8)
+        new.xyzu<- c(X,Y-1,Z,U+1)
+      if(e == 9)
+        new.xyzu<- c(X,Y,Z-1,U+1)
+      if(e == 10)  
+        new.xyzu<- c(X-1,Y,Z,U) 
+      if(e == 11) #new 
+        new.xyzu<- c(X,Y-1,Z,U) 
+      if(e == 12) #new 
+        new.xyzu<- c(X,Y,Z-1,U) 
+      if(e == 13) #new 
+        new.xyzu<- c(X,Y,Z,U-1) 
+      c(new.t,new.xyzu)
+    }
+  )
+}
+
+#we write a loop to iterate this simulation routine. 
+#time is continuous, we don't actually know how many events will occur in some specified period of time. 
+#Instead,we save some pre-set number of events"
+RTD.b.d.rogue.model <- function (x, params, nstep, tmax) {
+  X <- array(dim=c(nstep+1,5))
+  colnames(X) <- c("time","X","Y","Z","U")
+  X[1,] <- x
+  t<-x[[1]]
+  k<-1
+  while (t<tmax){
+    X[k+1,] <- x <- RTD.b.d.rogue.onestep(x,params)
+    new.t <- x[1]
+    t<-t+new.t
+    k<-k+1
+  }
+  X
+}
+
+```
+
+Part 2.1: Create parameters and run model using the function RTD.birth.death.model
+```{r stochastic model running}
+set.seed(38499583)
+nsims <- 10
+K<-10000 
+X0 <- 1000
+Y0 <- 10
+Z0 <- 10
+U0 <- 1
+nstep <- 600000
+tmax <- 500 
+xstart <- c(time=0,X=X0,Y=Y0,Z=Z0,U=U0)
+
+noRogue <- FALSE #TRUE for unrogued situation
+if (noRogue){
+  params <- c(K=K,r=0.001,p1=0.09/(K/9),p2=0.13/(K/9),p5=0.16/(K/9),q=0.0080,m=0.0125,n=0.0090,w=0.0250,s1=1.7,s2=0.7,d=0,e1=0.7,e2=0,e3=1,g=365/18) #notice d=0 
+}else{
+  params <- c(K=K,r=0.001,p1=0.08/(K/9),p2=0.125/(K/9),p5=0.086/(K/9),q=0.0080,m=0.0125,n=0.0090,w=0.0250,s1=0.75,s2=0.5,d=1,e1=0.7,e2=0,e3=1,g=365/12)
+}
+
+
+allRTDrv<- vector(mode='list',length=nsims)
+for (a in 1:nsims) {
+  allRTDrv[[a]] <- as.data.frame(RTD.b.d.rogue.model(xstart,params,nstep, tmax))
+  allRTDrv[[a]]$cum.time <- cumsum(allRTDrv[[a]]$time)
+}
+
+```
+
+
+Part 2.2: find means and SDs from 10 runs
+``` {r find sto means and SDs}
+B<- allRTDrv
+timepoint<-0:tmax
+
+EstXr <- data.frame(timepoint)
+EstYr <- data.frame(timepoint)
+EstZr <- data.frame(timepoint)
+EstUr <- data.frame(timepoint)
+EstPr <- data.frame(timepoint)
+
+thisXr <- NULL
+thisYr <- NULL
+thisZr <- NULL
+thisUr <- NULL
+thisPr <- NULL
+#for loop to create Est1...10
+for (i in 1:nsims){
+  simXr<-B[[i]]$X
+  simYr<-B[[i]]$Y
+  simZr<-B[[i]]$Z
+  simUr<-B[[i]]$U
+  t<-B[[i]]$cum.time
+  for(j in 1:length(timepoint))
+  {
+    thisID <- max(which(t<=timepoint[j]))
+    # which(x<=timepoint[j]) will return the index of element in x that is less than each timepoint
+    # max() is added so we get only the closet x to each time point
+    thisPr[j] <- simXr[thisID]+simYr[thisID]+simZr[thisID]+simUr[thisID]
+    thisXr[j] <- simXr[thisID]/thisPr[j]
+    thisYr[j] <- simYr[thisID]/thisPr[j]
+    thisZr[j] <- simZr[thisID]/thisPr[j]
+    thisUr[j] <- simUr[thisID]/thisPr[j]
+    # at this point thisX is the value for simulation i at time j
+  }
+  EstXr<- cbind(EstXr, thisXr)
+  EstYr<- cbind(EstYr, thisYr)
+  EstZr<- cbind(EstZr, thisZr)
+  EstUr<- cbind(EstUr, thisUr)
+  EstPr <- cbind(EstPr, thisPr)
+}
+colnames(EstXr) <- c("timepoints",1:nsims)
+colnames(EstYr) <- c("timepoints",1:nsims)
+colnames(EstZr) <- c("timepoints",1:nsims)
+colnames(EstUr) <- c("timepoints",1:nsims)
+colnames(EstPr) <- c("timepoints",1:nsims)
+MeanXr <-rowMeans(EstXr[,2:nsims+1])
+MeanYr <-rowMeans(EstYr[,2:nsims+1])
+MeanZr <-rowMeans(EstZr[,2:nsims+1])
+MeanUr <-rowMeans(EstUr[,2:nsims+1])
+MeanPr <-rowMeans(EstPr[,2:nsims+1])
+sdXr<- NULL
+sdYr<- NULL
+sdZr<- NULL
+sdUr<- NULL
+sdPr <- NULL
+for (k in 1:length(timepoint)){
+  sdXr<- c(sdXr,sd(EstXr[k,2:nsims+1]))
+  sdYr<- c(sdYr,sd(EstYr[k,2:nsims+1]))
+  sdZr<- c(sdZr,sd(EstZr[k,2:nsims+1]))
+  sdUr<- c(sdUr,sd(EstUr[k,2:nsims+1]))
+  sdPr<- c(sdPr,sd(EstPr[k,2:nsims+1]))
+}
+EstXr<-cbind(EstXr,MeanXr,sdXr)
+EstYr<-cbind(EstYr,MeanYr,sdYr)
+EstZr<-cbind(EstZr,MeanZr,sdZr)
+EstUr<-cbind(EstUr,MeanUr,sdUr)
+EstPr<-cbind(EstPr,MeanPr,sdPr)
+
+#change conditions and used below for storing any EstU fro further comparison
+if (params[[4]] == 1.125*params[[3]]){
+  EstUrI<-EstUr
+  EstPrI<- EstPr
+}else{
+  EstUrII<-EstUr
+  EstPrII<- EstPr
+}
+
+```
+
+Part 2.3: plot means and SDs from 10 runs
+```{r plot sto means}
+library(ggplot2)
+library(fields)
+U135mean<-round(EstUr[which(EstUr["timepoints"] == 135),"MeanUr"], digits = 3) 
+U500 <- round(EstUr[which(EstUr["timepoints"] == 500),"MeanUr"], digits = 3) 
+
+if(noRogue){
+  if (params[[4]] == 1.125*params[[3]]){
+  title <- paste0( "[Case I] Mean trajectories when p1=", params[[3]]*(K/9), ", p2=", params[[4]]*(K/9), ", p5=", params[[5]]*(K/9), " divided by K/9")
+} else if (params[[4]] == 2*params[[3]]){
+  title <- paste0( "[Case II] Mean trajectories when p1=", params[[3]]*(K/9), ", p2=", params[[4]]*(K/9), ", p5=", params[[5]]*(K/9), " divided by K/9")
+} else{
+  title <- paste0( "[default] Mean trajectories when p1=", params[[3]]*(K/9), ", p2=", params[[4]]*(K/9), ", p5=", params[[5]]*(K/9), " divided by K/9")
+}
+} else {
+  title <- paste0( "[rogue] Mean trajectories p1=", params[[3]]*(K/9), ", p2=", params[[4]]*(K/9), ", p5=", params[[5]]*(K/9), " divided by K/9", ", gap=" , params[[16]]/(365/12)," mo")
+}
+
+
+subtitle <- paste0( "s1=", params[[10]], ", s2=", params[[11]], ", K=",  params[[1]],", X0=", xstart[[2]], ", Y0=",  xstart[[3]], ", Z0=", xstart[[4]], ", U0=",xstart[[5]], " (n=10) with SD")
+colors <- c("X"= "black", "Y"= "red", "Z"="forestgreen", "U"="blue")
+ggplot()+
+  geom_ribbon(aes(x=timepoint,ymin = MeanXr- sdXr/2,ymax = MeanXr+ sdXr/2) ,alpha=0.25,fill ="black")+
+  geom_ribbon(aes(x=timepoint,ymin = MeanYr- sdXr/2,ymax = MeanYr+ sdYr/2) ,alpha=0.25,fill ="red")+
+  geom_ribbon(aes(x=timepoint,ymin = MeanZr- sdZr/2,ymax = MeanZr+ sdZr/2) ,alpha=0.25,fill ="forestgreen")+
+  geom_ribbon(aes(x=timepoint,ymin = MeanUr- sdUr/2,ymax = MeanUr+ sdUr/2) ,alpha=0.25,fill ="blue")+
+  geom_line(data = EstZr, mapping = aes(timepoint,MeanZr, col = "Z"), size = 0.5)+
+  geom_line(data = EstYr, mapping = aes(timepoint,MeanYr, col = "Y"), size = 0.5)+
+  geom_line(data = EstXr, mapping = aes(timepoint,MeanXr,  col = "X"), size = 0.5)+
+  geom_line(data = EstUr, mapping = aes(timepoint,MeanUr, col = "U"), size = 0.5)+
+  
+  labs(x ='Time (days)',y='Proportion in current population size', title = title, subtitle = subtitle, colour = "Compartment")+
+  scale_color_manual(values = colors)+
+  #ylim(-0.1,1)+
+  theme_bw()+
+  geom_point(aes(x = 135, y = U135mean), shape =1)+
+  geom_vline(aes(xintercept = 135), linetype = 2)+
+  annotate(geom = "text", x = 175, y = U135mean+0.02, label = print(paste0("U135 =" ,U135mean)) , size = 3)+
+  geom_point(aes(x = 500, y = U500), shape =1)+
+  geom_vline(aes(xintercept = 500), linetype = 2)+
+  annotate(geom = "text", x = 460, y = U500-0.02, label = print(paste0("U500 =" ,U500)), size = 3)
+  # +geom_point(aes(x = 135, y = 0.527))+
+  # annotate(geom = "text", x = 175, y = 0.80, label = "Default U135 = 0.527" , size = 3)+
+  # geom_point(aes(x = 500, y = 0.441))+
+  # annotate(geom = "text", x = 460, y = 0.80, label = "Default U500 = 0.441", size = 3)
+  
+```
+
+
+Part 2.4: find final size, min and max, and when they are equal
+```{r find final size, min and max}
+#last row
+# tail(EstX, n=1)[c("timepoints","MeanX")]
+# tail(EstY, n=1)[c("timepoints","MeanY")]
+# tail(EstZ, n=1)[c("timepoints","MeanZ")]
+# tail(EstU, n=1)[c("timepoints","MeanU")]
+#find U at day 135
+
+EstPr[which(EstPr["timepoints"] == 135),"MeanPr"]
+EstPr[which(EstPr["timepoints"] == 135),"MeanPr"]*U135mean
+            
+U135sd<-round(EstUr[which(EstUr["timepoints"] == 135),"sdUr"], digits = 3)  
+EstPr[which(EstPr["timepoints"] == 135),"MeanPr"]*U135sd
+EstYr[which(EstYr["timepoints"] == 135),"MeanYr"]*EstPr[which(EstPr["timepoints"] == 135),"MeanPr"]
+EstXr[which(EstXr["timepoints"] == 135),"MeanXr"]*EstPr[which(EstPr["timepoints"] == 135),"MeanPr"]
+EstZr[which(EstZr["timepoints"] == 135),"MeanZr"]*EstPr[which(EstPr["timepoints"] == 135),"MeanPr"]
+EstYr[which(EstYr["timepoints"] == 135),"MeanYr"]*EstPr[which(EstPr["timepoints"] == 135),"MeanPr"]
+nonaff135mean <- 1-U135mean
+
+print(paste0("Proportion of RTD-affected host (U) ay day 135 = ", U135mean, "+/-", U135sd))
+#print(paste0("Proportion of Non RTD-affected host = ", nonaff135mean , "+/-", U135sd))
+print(paste0("Proportion of RTD-affected host (U) ay day 500 = ", U500))     
+
+finalsize<-cbind(tail(EstXr, n=1)[c("timepoints","MeanXr")], tail(EstYr, n=1)["MeanYr"], tail(EstZr, n=1)["MeanZr"],tail(EstUr, n=1)["MeanUr"])
+finalsize
+
+maxvr<- c(max(MeanXr),max(MeanYr),max(MeanZr),max(MeanUr))
+timeMaxr <-c(EstXr$timepoints[min(which(MeanXr==max(MeanXr)))],
+            EstYr$timepoints[min(which(MeanYr==max(MeanYr)))],
+            EstZr$timepoints[min(which(MeanZr==max(MeanZr)))],
+            EstUr$timepoints[min(which(MeanUr==max(MeanUr)))])
+minvr<- c(min(MeanXr),min(MeanYr),min(MeanZr),min(MeanUr))
+timeMinr <-c(EstXr$timepoints[min(which(MeanXr==min(MeanXr)))],
+            EstYr$timepoints[min(which(MeanYr==min(MeanYr)))],
+            EstZr$timepoints[min(which(MeanZr==min(MeanZr)))],
+            EstUr$timepoints[min(which(MeanUr==min(MeanUr)))])
+maxmintabler <- data.frame(compartment = c("X","Y","Z","U"),max.value = maxvr, first.time.max = timeMaxr,min.value = minvr, first.time.min = timeMinr)
+maxmintabler
+
+diffXZ <- MeanXr- MeanZr
+IDxz<- which(abs(diffXZ)==min(abs(diffXZ)))
+XcrossZ<-timepoint[IDxz]          
+
+diffXY <- MeanXr- MeanYr
+IDxy<- which(abs(diffXY)==min(abs(diffXY)))
+XcrossY<-timepoint[IDxy]
+
+diffXU <- MeanXr- MeanUr
+IDxu<- which(abs(diffXU)==min(abs(diffXU)))
+XcrossU<-timepoint[IDxu]
+
+print(paste("X intersects Y at timepoint =", XcrossY))
+print(paste("X intersects Z at timepoint =", XcrossZ))
+print(paste("X intersects U at timepoint =", XcrossU))
+print(paste("Y peaks at timepoint =", EstYr$timepoints[min(which(MeanYr==max(MeanYr)))]))
+
+ 
+      
+
+
+# YcrossZ
+# YcrossU
+# ZcrossU
+```
+
+
+Part 3: comparison of EstU 
+(Need to change the code in Part 2 to store current EstUr)
+```{r compare U of case I and II or III and IV}
+ggplot()+
+  geom_ribbon(data = EstUrI, aes(x=timepoint,ymin = MeanUr- sdUr/2,ymax = MeanUr+ sdUr/2) ,alpha=0.5,fill ="grey")+
+  geom_line(data = EstUrI, mapping = aes(timepoint,MeanUr, col = "case I"), size = 0.5)+
+  
+  geom_ribbon(data = EstUrII, aes(x=timepoint,ymin = MeanUr- sdUr/2,ymax = MeanUr+ sdUr/2) ,alpha=0.5,fill ="grey")+
+  geom_line(data = EstUrII, mapping = aes(timepoint,MeanUr, col = "case II"), size = 0.5)+
+  
+  labs(x ='Time (days)',y='Mean proportion of U in current population', title = "Comparison of mean proportion of U at day 135 (n = 10 simulations)", subtitle = "Both have the same parameters, except for p2 (higher in case II)", colour = "Case")+
+  scale_color_manual(values = c("case I"= "darkorange2", "case II"= "darkviolet") )+
+  ylim(0,1)+
+  theme_bw()+
+  geom_vline(aes(xintercept = 135), linetype = 2)+
+  geom_hline(aes(yintercept = 0))+
+  geom_vline(aes(xintercept = 0)) +
+  coord_cartesian(xlim = c(120, 150), ylim = c(0.575, 0.70))+
+  theme(axis.text = element_text(size = 14))
+
+x<-1-EstUrIII[which(EstUrIII["timepoints"] == 135),2:11]
+y<-1-EstUrIV[which(EstUrIV["timepoints"] == 135),2:11]
+t.test(x,y)
+numberIII <- EstUrIII[which(EstUrIII["timepoints"] == 135),"MeanUr"]*EstPrIII[which(EstPrIII["timepoints"] == 135),"MeanPr"]
+numberIV <- EstUrIV[which(EstUrIV["timepoints"] == 135),"MeanUr"]*EstPrIV[which(EstPrIV["timepoints"] == 135),"MeanPr"]
+
+
+x500<-1-EstUrIII[which(EstUrIII["timepoints"] == 500),2:11]
+y500<-1-EstUrIV[which(EstUrIV["timepoints"] == 500),2:11]
+t.test(x500,y500)
+numberIII2 <- EstUrIII[which(EstUrI["timepoints"] == 500),"MeanUr"]*EstPrIII[which(EstPrIII["timepoints"] == 500),"MeanPr"]
+numberIV2 <- EstUrIV[which(EstUrII["timepoints"] == 500),"MeanUr"]*EstPrIV[which(EstPrIV["timepoints"] == 500),"MeanPr"]
+
+numberIII 
+numberIV
+numberIII2 
+numberIV2
+```
+
+
+Part 4: plot 10 separate stocahstic runs 
+```{r 10 separate stocahstic runs }
+crrr<- c("black", "#B2182B","#D6604D","#F4A582","#FDDBC7","#D1E5F0","#92C5DE","#4393C3","#2166AC", "darkblue")
+# max.y<-1.4*max((allRTDrv[[1]]$U/(allRTDrv[[1]]$X+allRTDrv[[1]]$Y+allRTDrv[[1]]$Z+allRTDrv[[1]]$U)), na.rm=TRUE)
+
+par(mfrow = c(1,1))
+plot(X/(X+Y+Z+U)~cum.time,data=allRTDrv[[1]],xlab='Time (days)',ylab='Proportion in current population',col=1,xlim=c(0,tmax),ylim=c(0,1), type='o',cex=0.1, main = "X-Simulation plot of out-of-range case(n = 10)") 
+abline(h =  seq(0.0, max.y+1, by = 0.1), lty=2, col = "grey")
+for (a in 1:nsims) {
+  lines(X/(X+Y+Z+U)~cum.time,data=allRTDrv[[a]],col=crrr[a],type='o',cex=0.1) #add each sim
+}
+
+plot(Y/(X+Y+Z+U)~cum.time,data=allRTDrv[[1]],xlab='Time (days)',ylab='Proportion in current population',col=1,xlim=c(0,tmax),ylim=c(0,1), type='o',cex=0.1, main = "Y-Simulation plot of out-of-range case(n = 10)") 
+abline(h =  seq(0.0, max.y+1, by = 0.1), lty=2, col = "grey")
+for (a in 1:nsims) {
+  lines(Y/(X+Y+Z+U)~cum.time,data=allRTDrv[[a]],col=crrr[a],type='o',cex=0.1) #add each sim
+}
+
+plot(Z/(X+Y+Z+U)~cum.time,data=allRTDrv[[1]],xlab='Time (days)',ylab='Proportion in current population',col=1,xlim=c(0,tmax),ylim=c(0,1), type='o',cex=0.1, main = "Z-Simulation plot of out-of-range case(n = 10)") 
+abline(h =  seq(0.0, max.y+1, by = 0.1), lty=2, col = "grey")
+for (a in 1:nsims) {
+  lines(Z/(X+Y+Z+U)~cum.time,data=allRTDrv[[a]],col=crrr[a],type='o',cex=0.1) #add each sim
+}
+
+plot(U/(X+Y+Z+U)~cum.time,data=allRTDrv[[1]],xlab='Time (days)',ylab='Proportion in current population',col=1,xlim=c(0,tmax),ylim=c(0,1), type='o',cex=0.1, main = "U-Simulation plot of out-of-range case(n = 10)") 
+abline(h =  seq(0.0, max.y+1, by = 0.1), lty=2, col = "grey")
+for (a in 1:nsims) {
+  lines(U/(X+Y+Z+U)~cum.time,data=allRTDrv[[a]],col=crrr[a],type='o',cex=0.1) #add each sim
+}
+
+
+
+
+```
+

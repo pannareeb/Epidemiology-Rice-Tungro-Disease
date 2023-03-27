@@ -1,0 +1,360 @@
+---
+title: "Parameter scanning"
+output: html_notebook
+---
+Part 0: Create a stochastic model for RTD 
+```{r stochastic model}
+RTD.b.d.rogue.onestep <- function (x, params) {
+  X <- x[2] # x[1] will be time
+  Y <- x[3]
+  Z <- x[4]
+  U <- x[5]
+  P <- X+Y+Z+U 
+  with(
+    as.list(params),
+    {
+      d1 <- d/(((1/e1)-(1/2))*g)  #g is gap between roguing #e is the efficiency of roguing #d is 0 or 1 representing if roguing is done or not
+      d2 <- d/(((1/e2)-(1/2))*g)
+      d3 <- d/(((1/e3)-(1/2))*g)
+      total.rate <- r*(K-P) + p1*(Y+s1*U)*X + p2*(Z+s2*U)*X + p5*U*X + p2*(Z+s2*U)*Y + m*Y + p1*(Y+s1*U)*Z + n*Z + w*U + q*X + d1*Y + d2*Z + d3*U   #every term, non-repeated
+      new.t <- rexp(n=1,rate=total.rate) #new timepoint is randomly selected with a exponential probability with the rate of total rate
+      new.xyzu<- c(X,Y,Z,U) #the first X Y Z U
+      Xadd <- r*(K-P) 
+      Zgone <- n*Z 
+      Ygone <- m*Y
+      Ugone <- w*U
+      XtoZ <- p2*(Z+s2*U)*X
+      XtoY <- p1*(Y+s1*U)*X
+      XtoU <- p5*U*X
+      YtoU <- p2*(Z+s2*U)*Y  
+      ZtoU <- p1*(Y+s1*U)*Z
+      Xgone <- q*X 
+      Yrogued <- d1*Y #new
+      Zrogued <- d2*Z #new
+      Urogued <- d3*U #new
+      realProbEvent <- c(Xadd,Zgone,Ygone,Ugone,XtoZ,XtoY,XtoU,YtoU,ZtoU,Xgone,Yrogued,Zrogued,Urogued)
+      e <- sample(x=1:13,size = 1,prob=realProbEvent) #e is a random number # 1:13
+      if(e == 1)
+        new.xyzu<- c(X+1,Y,Z,U)
+      if(e == 2)
+        new.xyzu<- c(X,Y,Z-1,U)
+      if(e == 3)
+        new.xyzu<- c(X,Y-1,Z,U)
+      if(e == 4)
+        new.xyzu<- c(X,Y,Z,U-1)
+      if(e == 5)
+        new.xyzu<- c(X-1,Y,Z+1,U)
+      if(e == 6)
+        new.xyzu<- c(X-1,Y+1,Z,U)
+      if(e == 7)
+        new.xyzu<- c(X-1,Y,Z,U+1)
+      if(e == 8)
+        new.xyzu<- c(X,Y-1,Z,U+1)
+      if(e == 9)
+        new.xyzu<- c(X,Y,Z-1,U+1)
+      if(e == 10)  
+        new.xyzu<- c(X-1,Y,Z,U) 
+      if(e == 11) #new 
+        new.xyzu<- c(X,Y-1,Z,U) 
+      if(e == 12) #new 
+        new.xyzu<- c(X,Y,Z-1,U) 
+      if(e == 13) #new 
+        new.xyzu<- c(X,Y,Z,U-1) 
+      c(new.t,new.xyzu)
+    }
+  )
+}
+
+RTD.b.d.rogue.model <- function (x, params, nstep, tmax) {
+  X <- array(dim=c(nstep+1,5))
+  colnames(X) <- c("time","X","Y","Z","U")
+  X[1,] <- x
+  t<-x[[1]]
+  k<-1
+  while (t<tmax){
+    X[k+1,] <- x <- RTD.b.d.rogue.onestep(x,params)
+    new.t <- x[1]
+    t<-t+new.t
+    k<-k+1
+  }
+  X
+}
+
+```
+
+Part 1: two-way scan of p2 and p5
+```{r scanning and plotting}
+library(ggplot2)
+library(fields)
+p2range <- seq(0.09,0.16,0.01)
+p5range <- seq(0.04,0.16,0.01)
+# p2range <- c(0.25,0.5,0.75,1,1.5,2,3,4)
+# s2range <- c(0.25,0.5,0.75,1,1.5,2,3,4)
+
+tw_X_matrix <- matrix(NA,ncol=length(p2range),nrow=length(p5range))
+tw_Y_matrix <- matrix(NA,ncol=length(p2range),nrow=length(p5range))
+tw_Z_matrix <- matrix(NA,ncol=length(p2range),nrow=length(p5range))
+tw_U_matrix <- matrix(NA,ncol=length(p2range),nrow=length(p5range))
+
+
+for (c in 1:length(p2range)){
+  for (r in 1:length(p5range)){
+    #run the model with cth element in p2range and rth element in p5range
+    RTDX <- NULL
+    RTDY <- NULL
+    RTDZ <- NULL
+    RTDU <- NULL
+    set.seed(38499583)
+    nsims <- 10
+    K<-10000 
+    X0 <- 1000
+    Y0 <- 10
+    Z0 <- 10
+    U0 <- 1
+    nstep <- 600000
+    tmax <- 500 
+    xstart <- c(time=0,X=X0,Y=Y0,Z=Z0,U=U0)
+    params <- c(K=K,r=0.001,p1=0.08/(K/9),p2=p2range[c]/(K/9),p5=p5range[r]/(K/9),q=0.0080,m=0.0125,n=0.0090,w=0.0250,s1=1,s2=1,d=0,e1=0.7,e2=0,e3=1,g=365/12)
+    allRTDv<- vector(mode='list',length=nsims)
+    ##10 sims
+    for (a in 1:nsims) {
+      allRTDv[[a]] <- as.data.frame(RTD.b.d.rogue.model(xstart,params,nstep, tmax))
+      allRTDv[[a]]$cum.time <- cumsum(allRTDv[[a]]$time)
+      #find means of U at the last day tmax in each sim
+      d135<-max(which(allRTDv[[a]]$cum.time<=135))
+      RTDX <- c(RTDX, allRTDv[[a]][d135, "X"]) 
+      RTDY <- c(RTDY, allRTDv[[a]][d135, "Y"])
+      RTDZ <- c(RTDZ, allRTDv[[a]][d135, "Z"])
+      RTDU <- c(RTDU, allRTDv[[a]][d135, "U"])
+    }
+    tw_X_matrix[r,c]<- mean(RTDX)/(mean(RTDU)+mean(RTDX)+mean(RTDY)+mean(RTDZ))
+    tw_Y_matrix[r,c]<- mean(RTDY)/(mean(RTDU)+mean(RTDX)+mean(RTDY)+mean(RTDZ))
+    tw_Z_matrix[r,c]<- mean(RTDZ)/(mean(RTDU)+mean(RTDX)+mean(RTDY)+mean(RTDZ))
+    tw_U_matrix[r,c]<- mean(RTDU)/(mean(RTDU)+mean(RTDX)+mean(RTDY)+mean(RTDZ))
+    print(paste0("done with (p2,p5) = ",p2range[c],",",p5range[r]))
+  }
+}
+par(mfrow=c(1,1))
+cool<-rev(heat.colors(100))
+cols=rainbow(100, s = 1, v = 1, start = 1/6, end = 4/6, alpha = 1)
+image.plot(tw_U_matrix,y=p2range,x=p5range,ylab = "p2", xlab = "p5", main = "Proportion of U at day 135 (n = 10 sims)", col=cool)
+abline(h =  0.125, lty=3, col = "black")
+abline(v =  0.086, lty=3, col = "black")
+points(0.086,0.125, pch = 4, cex = 0.75) #0.643
+image.plot(tw_X_matrix,y=p2range,x=p5range,ylab = "p2", xlab = "p5", main = "Proportion of X at day 135 (10 sims)", col=cool)
+image.plot(tw_Y_matrix,y=p2range,x=p5range,ylab = "p2", xlab = "p5", main = "Proportion of Y at day 135 (10 sims)", col=cool)
+image.plot(tw_Z_matrix,y=p2range,x=p5range,ylab = "p2", xlab = "p5", main = "Proportion of Z at day 135 (10 sims)", col=cool)
+
+```
+
+Part21: two-way scan of s1 and s2
+```{r scanning}
+s1range <- seq(0.125,1.5,0.125)
+s2range <- seq(0.125,1.5,0.125)
+# s1range <- c(0.25,0.5,0.75,1,1.5,2,3,4)
+# s2range <- c(0.25,0.5,0.75,1,1.5,2,3,4)
+
+tws_X_matrix <- matrix(NA,ncol=length(s1range),nrow=length(s2range))
+tws_Y_matrix <- matrix(NA,ncol=length(s1range),nrow=length(s2range))
+tws_Z_matrix <- matrix(NA,ncol=length(s1range),nrow=length(s2range))
+tws_U_matrix <- matrix(NA,ncol=length(s1range),nrow=length(s2range))
+
+
+for (c in 1:length(s1range)){
+  for (r in 1:length(s2range)){
+    #run the model with cth element in s1range and rth element in s2range
+    RTDX <- NULL
+    RTDY <- NULL
+    RTDZ <- NULL
+    RTDU <- NULL
+    set.seed(38499583)
+    nsims <- 10
+    K<-10000 
+    X0 <- 1000
+    Y0 <- 10
+    Z0 <- 10
+    U0 <- 1
+    nstep <- 600000
+    tmax <- 500 
+    xstart <- c(time=0,X=X0,Y=Y0,Z=Z0,U=U0)
+    params <- c(K=K,r=0.001,p1=0.08/(K/9),p2=0.125/(K/9),p5=0.086/(K/9),q=0.0080,m=0.009,n=0.0125,w=0.0250,s1=s1range[c],s2=s2range[r],d=0,e1=0.7,e2=0,e3=1,g=365/12)
+    allRTDv<- vector(mode='list',length=nsims)
+    ##10 sims
+    for (a in 1:nsims) {
+      allRTDv[[a]] <- as.data.frame(RTD.b.d.rogue.model(xstart,params,nstep, tmax))
+      allRTDv[[a]]$cum.time <- cumsum(allRTDv[[a]]$time)
+      #find means of U at the last day tmax in each sim
+      d135<-max(which(allRTDv[[a]]$cum.time<=135))
+      # RTDX <- c(RTDX, allRTDv[[a]][LastRowID, "X"])
+      # RTDY <- c(RTDY, allRTDv[[a]][LastRowID, "Y"])
+      # RTDZ <- c(RTDZ, allRTDv[[a]][LastRowID, "Z"])
+      # RTDU <- c(RTDU, allRTDv[[a]][LastRowID, "U"])
+      RTDX <- c(RTDX, allRTDv[[a]][d135, "X"])
+      RTDY <- c(RTDY, allRTDv[[a]][d135, "Y"])
+      RTDZ <- c(RTDZ, allRTDv[[a]][d135, "Z"])
+      RTDU <- c(RTDU, allRTDv[[a]][d135, "U"])
+    }
+    tws_X_matrix[r,c]<- mean(RTDX)/(mean(RTDU)+mean(RTDX)+mean(RTDY)+mean(RTDZ))
+    tws_Y_matrix[r,c]<- mean(RTDY)/(mean(RTDU)+mean(RTDX)+mean(RTDY)+mean(RTDZ))
+    tws_Z_matrix[r,c]<- mean(RTDZ)/(mean(RTDU)+mean(RTDX)+mean(RTDY)+mean(RTDZ))
+    tws_U_matrix[r,c]<- mean(RTDU)/(mean(RTDU)+mean(RTDX)+mean(RTDY)+mean(RTDZ))
+    print(paste0("done with (s1,s2) = ",s1range[c],",",s2range[r]))
+  }
+}
+
+```
+
+```{r plotting}
+par(mfrow=c(1,1))
+cool<-rev(heat.colors(100))
+cols=rainbow(100, s = 1, v = 1, start = 1/6, end = 4/6, alpha = 1)
+
+image.plot(tws_U_matrix,y=s1range,x=s2range,ylab = "s1", xlab = "s2", main = "Proportion of U at day 135 (n = 10 sims)", col=cool,axes=F)
+# abline(h =  0.458, lty=3, col = "black")
+# abline(v =  0.500, lty=3, col = "black")
+# points(0.500,0.458, pch = 4, cex = 0.75) #0.6081406
+axis(1, at=c(0.0,0.250,0.5,0.750,1.0,1.25,1.5), labels = c(0.0,0.250,0.50,0.750,1.00,1.25,1.5))
+axis(2, at=c(0.0,0.250,0.5,0.750,1.0,1.25,1.5), labels = c(0.0,0.250,0.50,0.750,1.00,1.25,1.5))
+
+image.plot(tws_Z_matrix,y=s1range,x=s2range,ylab = "s1", xlab = "s2", main = "Proportion of Z at day 135 (n = 10 sims)", col=cool,axes=F)
+abline(h =  0.458, lty=3, col = "black")
+abline(v =  0.500, lty=3, col = "black")
+points(0.500,0.458, pch = 4, cex = 0.75) #0.6081406
+axis(1, at=c(0.0,0.250,0.5,0.750,1.0,1.25,1.5), labels = c(0.0,0.250,0.50,0.750,1.00,1.25,1.5))
+axis(2, at=c(0.0,0.250,0.5,0.750,1.0,1.25,1.5), labels = c(0.0,0.250,0.50,0.750,1.00,1.25,1.5))
+
+image.plot(tws_Y_matrix,y=s1range,x=s2range,ylab = "s1", xlab = "s2", main = "Proportion of Y at day 135 (n = 10 sims)", col=cool,axes=F)
+abline(h =  0.458, lty=3, col = "black")
+abline(v =  0.500, lty=3, col = "black")
+points(0.500,0.458, pch = 4, cex = 0.75) #0.6081406
+axis(1, at=c(0.0,0.250,0.5,0.750,1.0,1.25,1.5), labels = c(0.0,0.250,0.50,0.750,1.00,1.25,1.5))
+axis(2, at=c(0.0,0.250,0.5,0.750,1.0,1.25,1.5), labels = c(0.0,0.250,0.50,0.750,1.00,1.25,1.5))
+
+image.plot(tws_X_matrix,y=s1range,x=s2range,ylab = "s1", xlab = "s2", main = "X at the end of day 135 (10 sims)", col=cool)
+
+```
+
+Part 3: one-way scan of s1 - s1owrange <- seq(0.125,2.0,0.125)
+```{r avg case scan s1 and plot}
+#case I scan s1
+tic("start")
+s1owrange <- seq(0.125,1.5,0.125)
+RTDXs1 <- matrix(NA,ncol=length(s1owrange))
+RTDYs1 <- matrix(NA,ncol=length(s1owrange))
+RTDZs1 <- matrix(NA,ncol=length(s1owrange))
+RTDUs1 <- matrix(NA,ncol=length(s1owrange))
+RTDPs1 <- matrix(NA,ncol=length(s1owrange))
+sdUs1 <- matrix(NA,ncol=length(s1owrange))
+for (i in 1:length(s1owrange)){
+  RTDX <- NULL
+  RTDY <- NULL
+  RTDZ <- NULL
+  RTDU <- NULL
+  set.seed(38499583)
+  nsims <- 10
+  K <- 10000 #K=10000 
+  X0 <- 1000 
+  Y0 <- 10
+  Z0 <- 10
+  U0 <- 1
+  nstep <- 60000 #divide in half as tmax decreased
+  tmax <- 500 
+  xstart <- c(time=0,X=X0,Y=Y0,Z=Z0,U=U0)
+  params <- c(K=K,r=0.001,p1=0.08/(K/9),p2=0.125/(K/9),p5=0.086/(K/9),m=0.0125,n=0.009,w=0.025,q=0.008,s1=s1owrange[i],s2=0.125,d=0,e1=0.7,e2=0,e3=1,g=365/12)
+  allRTDow<- vector(mode='list',length=nsims)
+  for (a in 1:nsims) {
+    allRTDow[[a]] <- as.data.frame(RTD.b.d.rogue.model(xstart,params,nstep, tmax))
+    allRTDow[[a]]$cum.time <- cumsum(allRTDow[[a]]$time)
+    LastRowID<-max(which(allRTDow[[a]]$cum.time<=tmax))
+    # RTDX <- c(RTDX, allRTDow[[a]][LastRowID, "X"])
+    # RTDY <- c(RTDY, allRTDow[[a]][LastRowID, "Y"])
+    # RTDZ <- c(RTDZ, allRTDow[[a]][LastRowID, "Z"])
+    # RTDU <- c(RTDU, allRTDow[[a]][LastRowID, "U"])
+    RTDX <- c(RTDX, allRTDow[[a]][max(which(allRTDow[[a]]["cum.time"] <= 135)), "X"])
+    RTDY <- c(RTDY, allRTDow[[a]][max(which(allRTDow[[a]]["cum.time"] <= 135)), "Y"])
+    RTDZ <- c(RTDZ, allRTDow[[a]][max(which(allRTDow[[a]]["cum.time"] <= 135)), "Z"])
+    RTDU <- c(RTDU, allRTDow[[a]][max(which(allRTDow[[a]]["cum.time"] <= 135)), "U"])
+  
+  }
+  RTDPs1[i] <- mean(RTDX)+mean(RTDY)+mean(RTDZ)+mean(RTDU)
+  RTDXs1[i] <- mean(RTDX)/RTDPs1[i]
+  RTDYs1[i] <- mean(RTDY)/RTDPs1[i]
+  RTDZs1[i] <- mean(RTDZ)/RTDPs1[i]
+  RTDUs1[i] <- mean(RTDU)/RTDPs1[i]
+  sdUs1[i] <- sd((RTDU)/RTDPs1[i])
+  print(paste0("done with s1 = ",s1owrange[i]))
+}
+
+toc()
+
+
+plot(s1owrange,RTDUs1 ,ty='o',cex=0.5, xlab='s1',ylab='Mean proportion of U in current population', xlim = c(min(s1owrange), max(s1owrange)), ylim = c(min(RTDUs1-sdUs1/2), max(RTDUs1+sdUs1/2)))
+polygon(x=c(s1owrange,rev(s1owrange)), y=c(RTDUs1+sdUs1/2,rev(RTDUs1-sdUs1/2)), density = 100, col="light grey", border = "light grey")
+title(main ="proportion of U135, s2 = 0.50")
+abline(h = seq(0.05,0.8,0.05),lty=2, col="grey")
+lines(s1owrange,RTDUs1 ,ty='o',cex=0.5, xlab='s1',ylab='mean proportion of U', xlim = c(min(s1owrange), max(s1owrange)), ylim = c(min(RTDUs1-sdUs1/2), max(RTDUs1+sdUs1/2)))
+abline(v = 0.458,lty=2, col = "black")
+abline(v = 0.75,lty=2, col = "red")
+```
+
+Part 4: one-way scan of s2 - s2owrange <- seq(0.125,2.0,0.125)
+```{r avg case scan s2 and plo}
+# scan s2
+tic("start")
+s2owrange <- seq(0.125,1.50,0.125)
+RTDXs2 <- matrix(NA,ncol=length(s2owrange))
+RTDYs2 <- matrix(NA,ncol=length(s2owrange))
+RTDZs2 <- matrix(NA,ncol=length(s2owrange))
+RTDUs2 <- matrix(NA,ncol=length(s2owrange))
+RTDPs2 <- matrix(NA,ncol=length(s2owrange))
+sdUs2 <- matrix(NA,ncol=length(s2owrange))
+for (i in 1:length(s2owrange)){
+  RTDX <- NULL
+  RTDY <- NULL
+  RTDZ <- NULL
+  RTDU <- NULL
+  set.seed(38499583)
+  nsims <- 10
+  K <- 10000 #K=10000 
+  X0 <- 1000 
+  Y0 <- 10
+  Z0 <- 10
+  U0 <- 1
+  nstep <- 60000 #divide in half as tmax decreased
+  tmax <- 500 #try 5 years = 1825 -> 3 years are enough
+  xstart <- c(time=0,X=X0,Y=Y0,Z=Z0,U=U0)
+  params <- c(K=K,r=0.001,p1=0.08/(K/9),p2=0.125/(K/9),p5=0.086/(K/9),m=0.0125,n=0.009,w=0.025,q=0.008,s2=s2owrange[i],s1=0.458,d=0,e1=0.7,e2=0,e3=1,g=365/12)
+  allRTDow<- vector(mode='list',length=nsims)
+  for (a in 1:nsims) {
+    allRTDow[[a]] <- as.data.frame(RTD.b.d.rogue.model(xstart,params,nstep, tmax))
+    allRTDow[[a]]$cum.time <- cumsum(allRTDow[[a]]$time)
+    LastRowID<-max(which(allRTDow[[a]]$cum.time<=135))
+    RTDX <- c(RTDX, allRTDow[[a]][LastRowID, "X"])
+    RTDY <- c(RTDY, allRTDow[[a]][LastRowID, "Y"])
+    RTDZ <- c(RTDZ, allRTDow[[a]][LastRowID, "Z"])
+    RTDU <- c(RTDU, allRTDow[[a]][LastRowID, "U"])
+    # RTDX <- c(RTDX, allRTDow[[a]][max(which(allRTDow[[a]]["cum.time"] <= 135)), "X"])
+    # RTDY <- c(RTDY, allRTDow[[a]][max(which(allRTDow[[a]]["cum.time"] <= 135)), "Y"])
+    # RTDZ <- c(RTDZ, allRTDow[[a]][max(which(allRTDow[[a]]["cum.time"] <= 135)), "Z"])
+    # RTDU <- c(RTDU, allRTDow[[a]][max(which(allRTDow[[a]]["cum.time"] <= 135)), "U"])
+  }
+  RTDPs2[i] <- mean(RTDX)+mean(RTDY)+mean(RTDZ)+mean(RTDU)
+  RTDXs2[i] <- mean(RTDX)/RTDPs2[i]
+  RTDYs2[i] <- mean(RTDY)/RTDPs2[i]
+  RTDZs2[i] <- mean(RTDZ)/RTDPs2[i]
+  RTDUs2[i] <- mean(RTDU)/RTDPs2[i]
+  sdUs2[i]<-sd((RTDU)/RTDPs2[i])
+  print(paste0("done with s2 = ",s2owrange[i]))
+}
+toc()
+
+par(mfrow=c(1,1))
+
+
+plot(s2owrange,RTDUs2 ,ty='o',cex=0.5, xlab='s2',ylab='Mean proportion of U in current population', xlim = c(min(s2owrange), max(s2owrange)), ylim = c(min(RTDUs1-sdUs1/2), max(RTDUs1+sdUs1/2)))
+polygon(x=c(s2owrange,rev(s2owrange)), y=c(RTDUs2+sdUs2/2,rev(RTDUs2-sdUs2/2)), density = 100, col="light grey", border = "light grey")
+title(main ="proportion of U135, s1 = 0.458", sub = params[[11]])
+abline(h = seq(0.05,0.8,0.05),lty=2, col="grey")
+lines(s2owrange,RTDUs2 ,ty='o',cex=0.5, xlab='s2',ylab='mean proportion of U', xlim = c(min(s2owrange), max(s2owrange)), ylim = c(min(RTDUs2-sdUs2/2), max(RTDUs2+sdUs2/2)))
+abline(v = 0.5,lty=2, col = "black")
+```

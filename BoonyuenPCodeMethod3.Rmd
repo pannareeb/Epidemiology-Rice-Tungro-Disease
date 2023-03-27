@@ -1,0 +1,709 @@
+---
+title: "Roguing"
+output: html_notebook
+---
+
+Part 0: Create a stochastic model for RTD that take into account roguing at rate di, the efficiciency is = 1 for U, 0.7 for Y and 0 for Z. The g is the gap between roguing.
+Our condition for roguing
+1. Within-field as each individual plant is a unit
+2. no replanting of rogued plants (would risk reinfection)
+```{r stochastic model}
+RTD.b.d.rogue.onestep <- function (x, params) {
+  X <- x[2] # x[1] will be time
+  Y <- x[3]
+  Z <- x[4]
+  U <- x[5]
+  P <- X+Y+Z+U 
+  with(
+    as.list(params),
+    {
+      d1 <- d/(((1/e1)-(1/2))*g)  #g is gap between roguing #e is the efficiency of roguing #d is 0 or 1 representing if roguing is done or not
+      d2 <- d/(((1/e2)-(1/2))*g)
+      d3 <- d/(((1/e3)-(1/2))*g)
+      total.rate <- r*(K-P) + p1*(Y+s1*U)*X + p2*(Z+s2*U)*X + p5*U*X + p2*(Z+s2*U)*Y + m*Y + p1*(Y+s1*U)*Z + n*Z + w*U + q*X + d1*Y + d2*Z + d3*U   #every term, non-repeated
+      new.t <- rexp(n=1,rate=total.rate) #new timepoint is randomly selected with a exponential probability with the rate of total rate
+      new.xyzu<- c(X,Y,Z,U) #the first X Y Z U
+      Xadd <- r*(K-P) 
+      Zgone <- n*Z 
+      Ygone <- m*Y
+      Ugone <- w*U
+      XtoZ <- p2*(Z+s2*U)*X
+      XtoY <- p1*(Y+s1*U)*X
+      XtoU <- p5*U*X
+      YtoU <- p2*(Z+s2*U)*Y  
+      ZtoU <- p1*(Y+s1*U)*Z
+      Xgone <- q*X 
+      Yrogued <- d1*Y #new
+      Zrogued <- d2*Z #new
+      Urogued <- d3*U #new
+      realProbEvent <- c(Xadd,Zgone,Ygone,Ugone,XtoZ,XtoY,XtoU,YtoU,ZtoU,Xgone,Yrogued,Zrogued,Urogued)
+      e <- sample(x=1:13,size = 1,prob=realProbEvent) #e is a random number # 1:13
+      if(e == 1)
+        new.xyzu<- c(X+1,Y,Z,U)
+      if(e == 2)
+        new.xyzu<- c(X,Y,Z-1,U)
+      if(e == 3)
+        new.xyzu<- c(X,Y-1,Z,U)
+      if(e == 4)
+        new.xyzu<- c(X,Y,Z,U-1)
+      if(e == 5)
+        new.xyzu<- c(X-1,Y,Z+1,U)
+      if(e == 6)
+        new.xyzu<- c(X-1,Y+1,Z,U)
+      if(e == 7)
+        new.xyzu<- c(X-1,Y,Z,U+1)
+      if(e == 8)
+        new.xyzu<- c(X,Y-1,Z,U+1)
+      if(e == 9)
+        new.xyzu<- c(X,Y,Z-1,U+1)
+      if(e == 10)  
+        new.xyzu<- c(X-1,Y,Z,U) 
+      if(e == 11) #new 
+        new.xyzu<- c(X,Y-1,Z,U) 
+      if(e == 12) #new 
+        new.xyzu<- c(X,Y,Z-1,U) 
+      if(e == 13) #new 
+        new.xyzu<- c(X,Y,Z,U-1) 
+      c(new.t,new.xyzu)
+    }
+  )
+}
+RTD.b.d.rogue.model <- function (x, params, nstep, tmax) {
+  X <- array(dim=c(nstep+1,5))
+  colnames(X) <- c("time","X","Y","Z","U")
+  X[1,] <- x
+  t<-x[[1]]
+  k<-1
+  while (t<tmax){
+    X[k+1,] <- x <- RTD.b.d.rogue.onestep(x,params)
+    new.t <- x[1]
+    t<-t+new.t
+    k<-k+1
+  }
+  X
+}
+```
+
+Part 1: Scanning and find ratio for plot Fig 10
+grange <- c(365/24,365/12,365/6,365/4,365/3,365/2,365) #every half month to 12 months
+```{r scan roguing - find ratio}
+
+grange <- c(365/24,365/12,365/6,365/4,365/3,365/2,365)
+# grange1 <- rev(seq(1,24,1))
+# grange<- 365/grange1
+
+# grange2<-seq(0.5,12,0.5)
+# grange<-(365/12)*grange2
+
+tic("scan g used")
+
+RTDXg <- matrix(NA,ncol=length(grange))
+RTDYg <- matrix(NA,ncol=length(grange))
+RTDZg <- matrix(NA,ncol=length(grange))
+RTDUg <- matrix(NA,ncol=length(grange))
+RTDPg <- matrix(NA,ncol=length(grange))
+sdXg <- matrix(NA,ncol=length(grange))
+sdUg <- matrix(NA,ncol=length(grange))
+sdYg <- matrix(NA,ncol=length(grange))
+sdZg <- matrix(NA,ncol=length(grange))
+sdPg <- matrix(NA,ncol=length(grange))
+for (i in 1:length(grange)){
+  RTDX <- NULL
+  RTDY <- NULL
+  RTDZ <- NULL
+  RTDU <- NULL
+  RTDP <- NULL
+  set.seed(38499583)
+  nsims <- 10
+  K <- 10000 #K=10000 
+  X0 <- 5000 #increase all by 10
+  Y0 <- 500
+  Z0 <- 500
+  U0 <- 500
+  nstep <- 60000 #divide in half as tmax decreased
+  tmax <- 500 
+  xstart <- c(time=0,X=X0,Y=Y0,Z=Z0,U=U0)
+  params <- c(K=K,r=0.001,p1=0.08/(K/9),p2=0.125/(K/9),p5=0.0860/(K/9),m=0.0125,n=0.009,w=0.025,q=0.008,s1=0.75,s2=0.500,d=1,e1=0.7,e2=0,e3=1,g=grange[i])
+  allRTDow<- vector(mode='list',length=nsims)
+  for (a in 1:nsims) {
+    allRTDow[[a]] <- as.data.frame(RTD.b.d.rogue.model(xstart,params,nstep, tmax))
+    allRTDow[[a]]$cum.time <- cumsum(allRTDow[[a]]$time)
+    d135<-max(which(allRTDow[[a]]$cum.time<= 135))
+    # RTDX <- c(RTDX, allRTDow[[a]][LastRowID, "X"])
+    # RTDY <- c(RTDY, allRTDow[[a]][LastRowID, "Y"])
+    # RTDZ <- c(RTDZ, allRTDow[[a]][LastRowID, "Z"])
+    # RTDU <- c(RTDU, allRTDow[[a]][LastRowID, "U"])
+    RTDX <- c(RTDX, allRTDow[[a]][max(which(allRTDow[[a]]["cum.time"] <= 135)), "X"])
+    RTDY <- c(RTDY, allRTDow[[a]][max(which(allRTDow[[a]]["cum.time"] <= 135)), "Y"])
+    RTDZ <- c(RTDZ, allRTDow[[a]][max(which(allRTDow[[a]]["cum.time"] <= 135)), "Z"])
+    RTDU <- c(RTDU, allRTDow[[a]][max(which(allRTDow[[a]]["cum.time"] <= 135)), "U"])
+    RTDP <- c(RTDP, allRTDow[[a]][d135, "X"]+allRTDow[[a]][d135, "Y"]+allRTDow[[a]][d135, "Z"]+allRTDow[[a]][d135, "U"])
+  }
+  RTDPg[i] <- mean(RTDP)
+  RTDXg[i] <- mean(RTDX)/RTDPg[i]
+  RTDYg[i] <- mean(RTDY)/RTDPg[i]
+  RTDZg[i] <- mean(RTDZ)/RTDPg[i]
+  RTDUg[i] <- mean(RTDU)/RTDPg[i]
+  sdUg[i] <- sd((RTDU)/RTDPg[i])
+  sdYg[i] <- sd((RTDY)/RTDPg[i])
+  sdZg[i] <- sd((RTDZ)/RTDPg[i])
+  sdXg[i] <- sd((RTDX)/RTDPg[i])
+  sdPg[i] <- sd(RTDP)
+  print(paste0("done with g = ",grange[i]))
+}
+
+toc()
+
+
+plot(grange,RTDUg,ty="o",xlab='Gap between roguing (g, months)',ylab='Mean proportion of host abundance', main="g - scanning outcome (at day 135)", col="blue", xlim = c(min(grange), max(grange)*1.05), ylim = c(min(RTDUg,RTDYg,RTDZg), max(RTDUg,RTDYg,RTDZg)*1.1),xaxt='n')
+
+polygon(x=c(grange,rev(grange)), y=c(RTDUg+sdUg/2,rev(RTDUg-sdUg/2)), density = 100, col="light blue", border = "light blue")
+polygon(x=c(grange,rev(grange)), y=c(RTDYg+sdYg/2,rev(RTDYg-sdYg/2)), density = 100, col="light pink", border = "light pink")
+polygon(x=c(grange,rev(grange)), y=c(RTDZg+sdZg/2,rev(RTDZg-sdZg/2)), density = 100, col="palegreen", border = "palegreen ")
+polygon(x=c(grange,rev(grange)), y=c(RTDXg+sdXg/2,rev(RTDXg-sdXg/2)), density = 100, col="light grey", border = "light grey ")
+
+lines(grange,RTDUg,ty="o",xlab='gap between roguing (g,days)',ylab='Mean proportion of host', main="g - scanning outcome (at day 135)", col="blue", xlim = c(min(grange), max(grange)*1.05), ylim = c(min(RTDUg,RTDYg,RTDZg), max(RTDUg,RTDYg,RTDZg)*1.1),xaxt='n')
+lines(grange,RTDYg, col = 2,ty="o")
+lines(grange,RTDZg, col = "forestgreen",ty="o")
+lines(grange,RTDXg, col = 1,ty="o", lwd = 1.5)
+axis(1, at = round(c(365/24,365/12,365/6,365/4,365/3,365/2,365)),labels = c("0.5", "1", "2", "3", "4", "6", "12"), las=0)
+abline(h = seq(0,1.0,0.1),lty=2, col = "grey")
+
+
+
+```
+
+Part 2: Scanning and find Yd (Fig 11A) and the Yd contribution (Sup. Fig.5.2)
+```{r scan roguing -> find number}
+library(tictoc) 
+#grange <- c(365/24,365/12,365/6,365/4,365/3,365/2,365) #every half month to 12 months
+grange2<-seq(0.5,12,0.5)
+grange<-(365/12)*grange2
+
+tic("scan g used")
+
+RTDXg <- matrix(NA,ncol=length(grange))
+RTDYg <- matrix(NA,ncol=length(grange))
+RTDZg <- matrix(NA,ncol=length(grange))
+RTDUg <- matrix(NA,ncol=length(grange))
+RTDPg <- matrix(NA,ncol=length(grange))
+sdXg <- matrix(NA,ncol=length(grange))
+sdUg <- matrix(NA,ncol=length(grange))
+sdYg <- matrix(NA,ncol=length(grange))
+sdZg <- matrix(NA,ncol=length(grange))
+sdPg <- matrix(NA,ncol=length(grange))
+newYdno <- matrix(NA,ncol=length(grange)) #Yd index - standard
+sdnewYdno <- matrix(NA,ncol=length(grange))
+for (i in 1:length(grange)){
+  RTDX <- NULL
+  RTDY <- NULL
+  RTDZ <- NULL
+  RTDU <- NULL
+  RTDP <- NULL
+  Ydno <- NULL
+  set.seed(38499583)
+  nsims <- 20
+  K <- 10000 #K=10000 
+  X0 <- 1000 #increase all by 10
+  Y0 <- 10
+  Z0 <- 10
+  U0 <- 1
+  nstep <- 60000 #divide in half as tmax decreased
+  tmax <- 500 
+  xstart <- c(time=0,X=X0,Y=Y0,Z=Z0,U=U0)
+  params <- c(K=K,r=0.001,p1=0.08/(K/9),p2=0.125/(K/9),p5=0.0860/(K/9),m=0.0125,n=0.009,w=0.025,q=0.008,s1=0.75,s2=0.500,d=1,e1=0.7,e2=0,e3=1,g=grange[i])
+  allRTDow<- vector(mode='list',length=nsims)
+  for (a in 1:nsims) {
+    allRTDow[[a]] <- as.data.frame(RTD.b.d.rogue.model(xstart,params,nstep, tmax))
+    allRTDow[[a]]$cum.time <- cumsum(allRTDow[[a]]$time)
+    #LastRowID<-max(which(allRTDow[[a]]$cum.time<=tmax))
+    d135<-max(which(allRTDow[[a]]["cum.time"] <= 135))
+    # RTDX <- c(RTDX, allRTDow[[a]][LastRowID, "X"])
+    # RTDY <- c(RTDY, allRTDow[[a]][LastRowID, "Y"])
+    # RTDZ <- c(RTDZ, allRTDow[[a]][LastRowID, "Z"])
+    # RTDU <- c(RTDU, allRTDow[[a]][LastRowID, "U"])
+    RTDX <- c(RTDX, allRTDow[[a]][d135, "X"])
+    RTDY <- c(RTDY, allRTDow[[a]][d135, "Y"])
+    RTDZ <- c(RTDZ, allRTDow[[a]][d135, "Z"])
+    RTDU <- c(RTDU, allRTDow[[a]][d135, "U"])
+    RTDP <- c(RTDP, allRTDow[[a]][d135, "X"]+allRTDow[[a]][d135, "Y"]+allRTDow[[a]][d135, "Z"]+allRTDow[[a]][d135, "U"])
+    Ydno <- c(Ydno, allRTDow[[a]][d135, "X"]+ 0.46*allRTDow[[a]][d135, "Y"]+0.78*allRTDow[[a]][d135, "Z"] + 0.12*allRTDow[[a]][d135, "U"])
+  }
+  RTDPg[i] <- mean(RTDP)
+  RTDXg[i] <- mean(RTDX)
+  RTDYg[i] <- mean(RTDY)
+  RTDZg[i] <- mean(RTDZ)
+  RTDUg[i] <- mean(RTDU)
+  sdXg[i] <- sd((RTDX))
+  sdUg[i] <- sd((RTDU))
+  sdYg[i] <- sd((RTDY))
+  sdZg[i] <- sd((RTDZ))
+  sdPg[i] <- sd(RTDP)
+  newYdno[i]<- mean(Ydno)
+  sdnewYdno[i] <- sd(Ydno)
+  print(paste0("done with g = ",grange[i]))
+}
+
+toc()
+
+contributionyd.df<-data.frame(contributionyd)
+contributionyd.df["gap"]<-grange
+RTDXgyd<- t(rbind(RTDXg,rep("X",24)))
+RTDYgyd<-t(rbind(RTDYg*0.46,rep("Y",24)))
+RTDZgyd<-t(rbind(RTDZg*0.78,rep("Z",24)))
+RTDUgyd<-t(rbind(RTDUg*0.12,rep("U",24)))
+contributionyd<-data.frame(rbind(RTDXgyd,RTDYgyd,RTDZgyd,RTDUgyd))
+contributionyd["gap"]<-rep(seq(0.5,12,0.5),4)
+ggplot(data=contributionyd)+
+  geom_bar(stat="identity", aes(y=as.numeric(X1), x=as.factor(gap), fill = X2), position = "dodge")+
+  scale_fill_manual(values = colors, name="Host compartment")+
+  theme_bw()+
+  labs(x="Gap between roguing (g, months)", y="contribution to Yd")+
+  theme(legend.position = "top")
+
+
+# ggplot(data=contributionyd.df)+
+#   geom_bar(stat="identity", aes(y=ydX, x=gap), fill = "forest green", alpha=0.5, col = "black", position = "dodge")+
+#   geom_bar(stat="identity", aes(y=ydX, x=gap), alpha=0.5, col = "black", position = "dodge")+
+#   geom_bar(stat="identity", aes(y=ydU, x=gap), fill = "blue", alpha=0.5, col = "black", position = "dodge")+
+#   geom_bar(stat="identity", aes(y=ydY, x=gap), fill = "red", alpha=0.5, col = "black", position = "dodge")
+```
+
+```{r plotting}
+#Plot Number of host in each compartment
+plot(grange,RTDUg,ty="o",xlab='Gap between roguing (g, days)',ylab='Host abundance (plants)', main="g - scanning outcome (at day 135)", col="blue", xlim = c(min(grange), max(grange)*1.05), ylim = c(min(RTDUg,RTDYg,RTDZg), max(RTDUg,RTDYg,RTDZg)*1.1),xaxt='n')
+polygon(x=c(grange,rev(grange)), y=c(RTDUg+sdUg/2,rev(RTDUg-sdUg/2)), density = 100, col="light blue", border = "light blue")
+polygon(x=c(grange,rev(grange)), y=c(RTDYg+sdYg/2,rev(RTDYg-sdYg/2)), density = 100, col="light pink", border = "light pink")
+polygon(x=c(grange,rev(grange)), y=c(RTDZg+sdZg/2,rev(RTDZg-sdZg/2)), density = 100, col="palegreen", border = "palegreen ")
+polygon(x=c(grange,rev(grange)), y=c(RTDXg+sdXg/2,rev(RTDXg-sdXg/2)), density = 100, col="light grey", border = "light grey ")
+lines(grange,RTDUg,ty="o", col="blue", xlim = c(min(grange), max(grange)*1.05), ylim = c(min(RTDUg,RTDYg,RTDZg), max(RTDUg,RTDYg,RTDZg)*1.1),xaxt='n', lwd = 1.5)
+lines(grange,RTDYg, col = 2,ty="o", lwd = 1.5)
+lines(grange,RTDZg, col = "forestgreen",ty="o", lwd = 1.5)
+lines(grange,RTDXg, col = 1,ty="o", lwd = 1.5)
+axis(1, at = round(c(365/24,365/12,365/6,365/4,365/3,365/2,365)), labels = c("0.5", "1", "2", "3", "4", "6", "12"), las=0)
+abline(h = seq(0,1000,50),lty=2, col = "grey")
+legend(x=275, y = 800,c("X","Y","Z","U"),col=c(1,2," forestgreen","blue"),lty=1,pch =1, cex=0.75, lwd = 1.5)
+
+
+#Plot Number of yielding host equivalent -> Fig 11A (Yd)
+plot(grange,newYdno,ty="o",xlab='Gap between roguing (g, days)',ylab= 'Number of yielding host equivalent (Yd)', main="Index 1: Number of yielding host equivalent", col="orange", xlim = c(min(grange), max(grange)*1.05), ylim = c(0, max(newYdno)*1.1),xaxt='n')
+#text(x=200, y = 500,labels="Yd = X135 + 0.46(Y135) + 0.78(Z135) + 0.12(U135)")
+polygon(x=c(grange,rev(grange)), y=c(newYdno+sdnewYdno/2,rev(newYdno-sdnewYdno/2)), density = 100, col="gold1", border = "  gold1")
+lines(grange,newYdno,ty="o",col="dark orange", lwd = 1.5)
+axis(1, at = round(c(365/24,365/12,365/6,365/4,365/3,365/2,365)),labels = c("0.5", "1", "2", "3", "4", "6", "12"), las=0)
+abline(h = seq(0,900,50),lty=2, col = "grey")
+abline(h = 276.2867,lty=1, col = "red")
+
+```
+
+
+```{r not necessary now}
+meanXg135<- RTDXg 
+meanYg135<- RTDYg 
+meanZg135<- RTDZg 
+meanUg135<- RTDUg
+meanPg135<- RTDPg
+sdUg135 <-sdUg
+sdYg135 <-sdYg 
+sdZg135 <-sdZg
+sdXg135 <-sdXg 
+sdUg135 <-sdUg
+
+# maxYd <- meanXg135 + 0.8*(meanYg135+meanZg135) + 0.7*meanUg135
+# minYd <- meanXg135 + 0.6*(meanYg135+meanZg135)
+# # # sdmaxYd <- sdXg135 + 0.8*(sdYg135+sdZg135) + 0.7*sdUg135
+# # # sdminYd <- sdXg135 + 0.6*(sdYg135+sdZg135)
+# # # sdmean <- (sdmaxYd+sdminYd)/2
+# maxYdno <- meanPg135*maxYd
+# minYdno <- meanPg135*minYd
+# meanYdno <- (maxYdno+minYdno)/2
+# newYdno<- (meanXg135 + 0.46*meanYg135 + 0.78* meanZg135 + 0.12*meanUg135)*meanPg135   
+# plot(y=meanYdno, x=grange, ylim = c(0,max(maxYdno)), xaxt = "n" , ylab = "Number of yielding hosts", xlab = 'Gap between roguing (g, days)', main = "Matrix 1: Potential yield", sub = "The maximum and minimum number represented by the shaded area ", ty ="o")
+# polygon(x=c(grange,rev(grange)), y=c(maxYdno,rev(minYdno)), density = 100, col="light grey", border = "light grey")
+# abline(h = seq(0,max(maxYdno),100),lty=2, col = "grey")
+# # lines(y=maxYdno, x=grange, ty = "l")
+# # lines(y=minYdno, x=grange, ty = "l")
+# lines(y=meanYdno, x=grange, ty ="o")
+# axis(1, at = round(c(365/24,365/12,365/6,365/4,365/3,365/2,365)), las=0)
+# 
+# plot(y=meanYdno, x=grange, ylim = c(0,max(maxYdno)))
+
+```
+
+Part 3: Use previous scan in part 2 to find Econ (effectiveness based on 1) cost of roguing  and 2) price of grain yield per rice plant)
+```{r econ}
+ratio <- seq(0,80,10)
+econ <- matrix(NA,nrow=length(grange), ncol =length(ratio))
+for (r in 1:length(grange)) {
+  for (c in 1:length(ratio)) {
+     econ[r,c] <- newYdno[r] - (135/grange[r])*ratio[c]
+  }
+}
+#plotting -> Fig 11B Econ
+plot(y=econ[,1], x=grange, ylim = c(0,900), xaxt ="n", xlab = "Gap between roguing (g, months)", ylab = "Economics of Roguing (Econ)", ty = "o",cex=0.5, col=rainbow(9)[1], lwd = 2)
+for (ra in 2:length(ratio)) {
+  lines(y=econ[,ra], x=grange,col=rainbow(9)[ra],type='o',cex=0.5, lwd = 2)
+}
+axis(1, at = round(c(365/24,365/12,(365/12+365/6)/2,365/6,365/4,365/3,365/2,365/1.5,365)), las=0, labels = c("0.5", "1","1.5", "2", "3", "4", "6", "9","12"))
+abline(h = seq(0,900,50),lty=2, col = "grey")
+#legend(title = "Ratio Cr/Pr", x=230, y = 800, c("0","10","20","30", "40"),col=rainbow(9)[1:5],lty=1, cex=0.75, lwd = 2, pch = 1, box.col = "white")
+#legend(x=300, y = 700, c("50","60","70","80"),col=rainbow(9)[6:9],lty=1, cex=0.75, lwd = 2, pch = 1, box.col = "white")
+# econ.df<-data.frame(econ)
+# econnew<-read.csv(file = '/Users/panareeboonyuen/Desktop/book1.csv')
+# econnew<-select(econnew,g,econn,Cr.Pr)
+# 
+# ggplot()+
+#   geom_bar(data=econnew,stat = "identity",mapping = aes(x=as.factor(g), y = econn, fill = as.factor(Cr.Pr)))+
+#   facet_wrap(~Cr.Pr)+
+#   scale_x_discrete(labels=c("15" = "0.5", "30" = "1","61" = "2", "91" = "3", "122"="4", "182"="6", "365"= "12"), name = "The best gap (months)")+
+#   labs( y = "Number of simulations", title ="The distribution of the best gap at each ratio, given the different errors in yield coefficient of Z135")+
+#   scale_fill_manual(values = rainbow(9),name = "Cr/Pr ratio")+  
+#   theme_bw()+
+#   theme(strip.text.x =element_text(face="bold",size=14), axis.title = element_text(face="bold",size=14), axis.text.x =element_text(face="bold",size=12),strip.text.y =element_text(face="bold",size=12) )
+
+```
+
+Part 4: error in c
+```{r sampling c}
+#find the best one for no error-> for each column (each ratio), which g gives the highest Econ
+IDmax <- matrix(NA,nrow=length(ratio))
+for (c in 1:length(ratio)){
+  IDmax[c] <- grange[which(econ[,c]==max(econ[,c]))]
+}
+plot(x=ratio,y=IDmax)
+
+#grange3<-grange[1:9]
+
+c1<-0.46
+c2<-0.78
+c3<-0.12
+co_er_range<- c(0.05,0.15,0.25)
+npick <- 1000
+
+collectgbest<- vector(mode='list',length=length(co_er_range))
+collectgbest.df<- NULL
+
+for (co_er in 1:length(co_er_range)){
+  c2er <- matrix(NA,nrow=length(grange), ncol=npick)
+  ratio <- seq(0,80,10)
+  Z_er <- matrix(NA,nrow=length(grange), ncol=npick)
+  Yd_er_Z <- matrix(NA,nrow=length(grange), ncol=npick)
+  gbest_er <- matrix(NA,ncol =npick, nrow = length(ratio))
+#let ry with only vary Z coeff = c2
+#c1er<-runif(1,min = c1*(1-0.05), max = c1*(1+0.05))
+  for (i in 1:length(ratio)){
+    for (p in 1:npick){
+    econ_er <- matrix(NA,nrow=length(grange), ncol=npick)
+      for (r in 1:length(grange)){
+    
+      c2er[,p]<-runif(1,min = c2*(1-co_er_range[co_er]), max = c2*(1+co_er_range[co_er]))
+    #c3er<-runif(1,min = c3*(1-0.05), max = c3*(1+0.05))
+    #Y_er<-RTDYg*c1er
+      Z_er[r,p]<-RTDZg[r]*c2er[r,p]
+    #U_er<-RTDUg*c3er
+    #Yd_er<-RTDXg+Y_er+Z_er+U_er
+      Yd_er_Z[r,p]<-RTDXg[r]+c1*RTDYg[r]+Z_er[r,p]+c3*RTDUg[r]
+      econ_er[r,p] <- Yd_er_Z[r,p] - (135/grange[r])*ratio[i] 
+      }
+    gbest_er[i,p] <- grange[which(econ_er[,p]==max(econ_er[,p]))] #look at each row of econ_er, and pick the max one -> find the g that produced it -> then this is the best g for each pick -> store in gbest = g1 at gbest_er[i,p]this is for 1 ratio
+    print(i)
+    }
+  collectgbest[[co_er]]<-t(gbest_er)
+}
+
+}
+
+# plot(x=ratio,y=collectgbest[[1]][1,], ylim = c(0, 365), ylab = "The best g", yaxt = "n")
+# for (j in rev(1:length(co_er_range))){
+#   for (i in 1:npick){
+#   points(x=ratio,y=collectgbest[[j]][i,], col = j)
+#   }
+# }
+# axis(2, at = round(c(365/24,365/12,365/6,365/4,365/3,365/2,365)), las=0)
+# 
+# plot(x=ratio,y=collectgbest[[1]][1,], ylim = c(0, 365), ylab = "The best g", yaxt = "n")
+# for (i in 1:npick){
+#   points(x=ratio,y=collectgbest[[1]][i,], col = 1)
+# }
+# axis(2, at = round(c(365/24,365/12,365/6,365/4,365/3,365/2,365)), las=0)
+# 
+# plot(x=ratio,y=collectgbest[[2]][1,], ylim = c(0, 365), ylab = "The best g", yaxt = "n")
+# for (i in 1:npick){
+#   points(x=ratio,y=collectgbest[[2]][i,], col = 2)
+# }
+# axis(2, at = round(c(365/24,365/12,365/6,365/4,365/3,365/2,365)), las=0)
+# 
+# plot(x=ratio,y=collectgbest[[3]][1,], ylim = c(0, 365), ylab = "The best g", yaxt = "n")
+# for (i in 1:npick){
+#   points(x=ratio,y=collectgbest[[3]][i,], col = 3)
+# }
+# axis(2, at = round(c(365/24,365/12,365/6,365/4,365/3,365/2,365)), las=0)
+
+gbest052<-data.frame(collectgbest[[1]])
+gbest152<-data.frame(collectgbest[[2]])
+gbest252<-data.frame(collectgbest[[3]])
+gbest2.df<-rbind(gbest052,gbest152,gbest252)
+colnames(gbest2.df)<-c("x","x","x","x","x","x","x","x","x")
+```
+
+```{r Fig 12}
+
+gbestcombined<-rbind(gbest2.df[1],gbest2.df[2],gbest2.df[3],gbest2.df[4],gbest2.df[5],gbest2.df[6],gbest2.df[7],gbest2.df[8],gbest2.df[9])
+gbestcombineddf<-data.frame(gbestcombined)
+
+write.csv(gbest2.df,'/Users/panareeboonyuen/Desktop/gbest222.csv')
+#after write gbest.df -> we manually make the data into stacked version and import it in again as newdf
+newdf <- read.csv(file = '/Users/panareeboonyuen/Desktop/gbest222.csv')
+
+#newdfx2 <- cbind(gbestcombined,newdf["ratio"],newdf["error"])
+#plot 1: newdf in point jitter: the distribution of the best gap at each ratio, given the different errors in yield coefficient of Z135
+# ggplot()+
+#   geom_point(data=newdfx2,mapping = aes(x=as.factor(error),y=as.factor(round(x))), position = "jitter", size =0.5)+
+#   facet_wrap(~ ratio, nrow=3)+
+#   scale_y_discrete(labels=c("15" = "0.5", "30" = "1","61" = "2", "91" = "3", "122"="4", "182"="6", "365"= "12"))+
+#   labs(x = "Error percentage in yield coefficient of Z135", y = "The best inter-rogue gap (months)", title ="The distribution of the best gap at each ratio, given the different errors in yield coefficient of Z135")
+
+by_gb_err<-group_by(newdf,ratio,error,x)
+ggee2<-summarise(by_gb_err,
+              count=n())
+
+#plot 2: ggee in bar chart: The distribution of the best gap at each ratio, given the different errors in yield coefficient of Z135
+ggplot()+
+  geom_bar(data=ggee2,stat = "identity",mapping = aes(x=as.factor(round(x)), y = count, fill = as.factor(error)), position = "dodge")+
+  facet_wrap(~ ratio, nrow=3)+
+  scale_x_discrete(labels=c("15" = "0.5", "30" = "1.0", "46" = "1.5","61" = "2.0", "76" = "2.5", "91" = "3.0", "106" = "3.5", "122"="4.0", "198"="6.5", "243"= "8.0"))+
+  labs(x = "The best inter-rogue gap (months)", y = "Number of simulations", title ="The distribution of the best gap at each ratio, given the different errors in yield coefficient of Z135")+
+  scale_fill_brewer(name = "Error percentage", palette = "Set1")+
+  theme_bw()+
+  theme(title =element_text(face="bold",size=10))
+
+# library("RColorBrewer")
+# ggplot()+
+#   geom_bar(data=ggee,stat = "identity",mapping = aes(x=as.factor(error), y = count, fill = as.factor(round(gbest))))+
+#   facet_wrap(~ ratio, nrow=3)+
+#   scale_fill_discrete(labels=c("15" = "0.5", "30" = "1","61" = "2", "91" = "3", "122"="4", "182"="6", "365"= "12"), name = "The best gap (months)") +
+#   labs(x = "Error percentage of yield coefficient of Z135 ", y = "Number of simulations", title ="The distribution of the best gap at each ratio, given the different errors in yield coefficient of Z135")+
+#   theme_bw()+
+#   theme(title =element_text(face="bold",size=10))
+
+#real Fig12 plot
+ggplot()+
+  geom_bar(data=ggee2,stat = "identity",mapping = aes(x=as.factor(round(x)), y = count, fill = as.factor(ratio)))+
+  facet_grid(ratio~error )+
+  scale_x_discrete(labels=c("15" = "0.5", "30" = "1.0", "46" = "1.5","61" = "2.0", "76" = "2.5", "91" = "3.0", "106" = "3.5", "122"="4.0", "198"="6.5", "243"= "8.0"), name = "The best gap (months)")+
+  labs( y = "Number of simulations", title ="The distribution of the best gap at each ratio, given the different errors in yield coefficient of Z135")+
+  scale_fill_manual(values = rainbow(9),name = "Cr/Pr ratio")+  
+  theme_bw()+
+  theme(strip.text.x =element_text(face="bold",size=12), axis.title = element_text(face="bold",size=12), axis.text.x =element_text(face="bold",size=10),strip.text.y =element_text(face="bold",size=12), legend.position = "bottom")
+# 
+# ggplot()+
+#   geom_bar(data=ggee,stat = "identity",mapping = aes(x=as.factor(round(gbest)), y = count, fill = as.factor(ratio)))+
+#   scale_fill_manual(values = rainbow(9),name = "Cr/Pr ratio")+  
+#   theme_bw()+
+#   scale_x_discrete(labels=c("15" = "0.5", "30" = "1","61" = "2", "91" = "3", "122"="4", "182"="6", "365"= "12"), name = "The best gap (months)")+
+# labs( y = "Number of simulations")+
+#   facet_wrap(~error)+
+#   theme(strip.text =element_text(face="bold",size=14), axis.title = element_text(face="bold",size=14))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Addiitonal: Plot real number of rice 
+
+```{r runnin - stochastic model}
+set.seed(38499583)
+nsims <- 10
+#popSS<- 10000 
+K<-10000 
+X0 <- 1000
+Y0 <- 10
+Z0 <- 10
+U0 <- 1
+nstep <- 600000
+tmax <- 500 
+xstart <- c(time=0,X=X0,Y=Y0,Z=Z0,U=U0)
+
+noRogue <- TRUE
+if (noRogue){
+  params <- c(K=K,r=0.001,p1=0.08/(K/9),p2=0.125/(K/9),p5=0.086/(K/9),q=0.0080,m=0.0125,n=0.0090,w=0.0250,s1=0.75,s2=0.5,d=0,e1=0.7,e2=0,e3=1,g=365) #notice d=0 
+}else{
+  params <- c(K=K,r=0.001,p1=0.08/(K/9),p2=0.125/(K/9),p5=0.086/(K/9),q=0.0080,m=0.0125,n=0.0090,w=0.0250,s1=0.75,s2=0.5,d=1,e1=0.7,e2=0,e3=1,g=365)
+}
+#tryNik
+#params <- c(K=9*popSS,r=0.001,p1=0.08/popSS,p2=0.09/popSS,p5=0.12/popSS,q=0.0080,m=0.0125,n=0.0090,w=0.0250,s1=4,s2=0.5,d=0,e1=0.7,e2=0,e3=1,g=365/12)
+
+allRTDrv<- vector(mode='list',length=nsims)
+for (a in 1:nsims) {
+  allRTDrv[[a]] <- as.data.frame(RTD.b.d.rogue.model(xstart,params,nstep, tmax))
+  allRTDrv[[a]]$cum.time <- cumsum(allRTDrv[[a]]$time)
+}
+
+```
+
+``` {r find means}
+
+B<- allRTDrv
+timepoint<-0:tmax
+
+EstXn <- data.frame(timepoint)
+EstYn <- data.frame(timepoint)
+EstZn <- data.frame(timepoint)
+EstUn <- data.frame(timepoint)
+EstPn <- data.frame(timepoint)
+
+thisXr <- NULL
+thisYr <- NULL
+thisZr <- NULL
+thisUr <- NULL
+thisPr <- NULL
+#for loop to create Est1...10
+for (i in 1:nsims){
+  simXr<-B[[i]]$X
+  simYr<-B[[i]]$Y
+  simZr<-B[[i]]$Z
+  simUr<-B[[i]]$U
+  t<-B[[i]]$cum.time
+  for(j in 1:length(timepoint))
+  {
+    thisID <- max(which(t<=timepoint[j]))
+    # which(x<=timepoint[j]) will return the index of element in x that is less than each timepoint
+    # max() is added so we get only the closet x to each time point
+    thisPr[j] <- simXr[thisID]+simYr[thisID]+simZr[thisID]+simUr[thisID]
+    thisXr[j] <- simXr[thisID]
+    thisYr[j] <- simYr[thisID]
+    thisZr[j] <- simZr[thisID]
+    thisUr[j] <- simUr[thisID]
+    # at this point thisX is the value for simulation i at time j
+  }
+  EstXn<- cbind(EstXn, thisXr)
+  EstYn<- cbind(EstYn, thisYr)
+  EstZn<- cbind(EstZn, thisZr)
+  EstUn<- cbind(EstUn, thisUr)
+  EstPn <- cbind(EstPn, thisPr)
+}
+colnames(EstXn) <- c("timepoints",1:nsims)
+colnames(EstYn) <- c("timepoints",1:nsims)
+colnames(EstZn) <- c("timepoints",1:nsims)
+colnames(EstUn) <- c("timepoints",1:nsims)
+colnames(EstPn) <- c("timepoints",1:nsims)
+MeanXn <-rowMeans(EstXn[,2:nsims+1])
+MeanYn <-rowMeans(EstYn[,2:nsims+1])
+MeanZn <-rowMeans(EstZn[,2:nsims+1])
+MeanUn <-rowMeans(EstUn[,2:nsims+1])
+MeanPn <-rowMeans(EstPn[,2:nsims+1])
+sdXn<- NULL
+sdYn<- NULL
+sdZn<- NULL
+sdUn<- NULL
+sdPn <- NULL
+for (k in 1:length(timepoint)){
+  sdXn<- c(sdXn,sd(EstXn[k,2:nsims+1]))
+  sdYn<- c(sdYn,sd(EstYn[k,2:nsims+1]))
+  sdZn<- c(sdZn,sd(EstZn[k,2:nsims+1]))
+  sdUn<- c(sdUn,sd(EstUn[k,2:nsims+1]))
+  sdPn<- c(sdPn,sd(EstPn[k,2:nsims+1]))
+}
+EstXn<-cbind(EstXn,MeanXn,sdXn)
+EstYn<-cbind(EstYn,MeanYn,sdYn)
+EstZn<-cbind(EstZn,MeanZn,sdZn)
+EstUn<-cbind(EstUn,MeanUn,sdUn)
+EstPn<-cbind(EstPn,MeanPn,sdPn)
+
+# # if (params[[4]] == 1.125*params[[3]]){
+# #   EstUrI<-EstUr
+# #   EstPrI<- EstPr
+# # }else{
+#   EstUrV<-EstUr
+#   EstPrV<- EstPr
+# # }
+
+```
+
+```{r plot means}
+library(ggplot2)
+library(fields)
+
+
+NumU<-EstUn["MeanUn"]
+NumX<-EstXn["MeanXn"]
+NumY<-EstYn["MeanYn"]
+NumZ<-EstZn["MeanZn"]
+sdNumU <-EstUn["sdUn"]
+sdNumX <-EstXn["sdXn"]
+sdNumY <-EstYn["sdYn"]
+sdNumZ <-EstZn["sdZn"]
+NumberYieldmean <- cbind(NumX,NumY,NumZ,NumU)
+NumberYieldmean["maxYd"]<-
+NumberYieldsd <- cbind(sdNumU,sdNumY,sdNumZ,sdNumU)
+NumberYieldmean[0:13,]
+ggplot()+
+  geom_line(data = EstXn, mapping = aes(timepoint,MeanXn,  col = "X"), size = 0.5)+
+  geom_line(data = EstYn, mapping = aes(timepoint,MeanYn,  col = "Y"), size = 0.5)+
+  geom_line(data = EstZn, mapping = aes(timepoint,MeanZn,  col = "Z"), size = 0.5)+
+  geom_line(data = EstUn, mapping = aes(timepoint,MeanUn,  col = "U"), size = 0.5)+
+  scale_color_manual(values = colors)
+
+U135n<-EstUn[which(EstUn["timepoints"] == 135),"MeanUn"] 
+X135n<-EstXn[which(EstXn["timepoints"] == 135),"MeanXn"] 
+Y135n<-EstYn[which(EstYn["timepoints"] == 135),"MeanYn"] 
+Z135n<-EstZn[which(EstZn["timepoints"] == 135),"MeanZn"]
+unrougeYd<- X135n + 0.46*Y135n + 0.78* Z135n + 0.12*U135n
+if(noRogue){
+  if (params[[4]] == 1.125*params[[3]]){
+  title <- paste0( "[Case I] Mean trajectories when p1=", params[[3]]*(K/9), ", p2=", params[[4]]*(K/9), ", p5=", params[[5]]*(K/9), " divided by K/9")
+} else if (params[[4]] == 2*params[[3]]){
+  title <- paste0( "[Case II] Mean trajectories when p1=", params[[3]]*(K/9), ", p2=", params[[4]]*(K/9), ", p5=", params[[5]]*(K/9), " divided by K/9")
+} else{
+  title <- paste0( "[default] Mean trajectories when p1=", params[[3]]*(K/9), ", p2=", params[[4]]*(K/9), ", p5=", params[[5]]*(K/9), " divided by K/9")
+}
+} else {
+  title <- paste0( "[rogue] Mean trajectories p1=", params[[3]]*(K/9), ", p2=", params[[4]]*(K/9), ", p5=", params[[5]]*(K/9), " divided by K/9", ", gap=" , params[[16]]/(365/12)," mo")
+}
+
+
+subtitle <- paste0( "s1=", params[[10]], ", s2=", params[[11]], ", K=",  params[[1]],", X0=", xstart[[2]], ", Y0=",  xstart[[3]], ", Z0=", xstart[[4]], ", U0=",xstart[[5]], " (n=10) with SD")
+colors <- c("X"= "black", "Y"= "red", "Z"="forestgreen", "U"="blue")
+ggplot()+
+  geom_ribbon(aes(x=timepoint,ymin = MeanXr- sdXr/2,ymax = MeanXr+ sdXr/2) ,alpha=0.25,col ="grey")+
+  geom_line(data = EstXr, mapping = aes(timepoint,MeanXr,  col = "X"), size = 0.5)+
+  
+  geom_ribbon(aes(x=timepoint,ymin = MeanYr- sdXr/2,ymax = MeanYr+ sdYr/2) ,alpha=0.25,col ="grey")+
+  geom_line(data = EstYr, mapping = aes(timepoint,MeanYr, col = "Y"), size = 0.5)+
+  
+  geom_ribbon(aes(x=timepoint,ymin = MeanZr- sdZr/2,ymax = MeanZr+ sdZr/2) ,alpha=0.25,col ="grey")+
+  geom_line(data = EstZr, mapping = aes(timepoint,MeanZr, col = "Z"), size = 0.5)+
+  
+  geom_ribbon(aes(x=timepoint,ymin = MeanUr- sdUr/2,ymax = MeanUr+ sdUr/2) ,alpha=0.25,col ="grey")+
+  geom_line(data = EstUr, mapping = aes(timepoint,MeanUr, col = "U"), size = 0.5)+
+  
+  labs(x ='Time (days)',y='Proportion in current population size', title = title, subtitle = subtitle, colour = "Compartment")+
+  scale_color_manual(values = colors)+
+  ylim(0,1)+
+  theme_bw()+
+  geom_point(aes(x = 135, y = U135mean), shape =1)+
+  geom_vline(aes(xintercept = 135), linetype = 2)+
+  annotate(geom = "text", x = 175, y = U135mean+0.02, label = print(paste0("U135 =" ,U135mean)) , size = 3)+
+  geom_point(aes(x = 500, y = U500), shape =1)+
+  geom_vline(aes(xintercept = 500), linetype = 2)+
+  annotate(geom = "text", x = 460, y = U500-0.02, label = print(paste0("U500 =" ,U500)), size = 3)+
+  
+  geom_point(aes(x = 135, y = 0.527))+
+  annotate(geom = "text", x = 175, y = 0.56, label = "U135 = 0.527" , size = 3)+
+  geom_point(aes(x = 500, y = 0.441))+
+  annotate(geom = "text", x = 460, y = 0.48, label = "U500 = 0.441", size = 3)
+  
+```
+

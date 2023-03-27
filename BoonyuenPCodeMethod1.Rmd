@@ -1,0 +1,345 @@
+---
+title: "Comparison of deterministic and stochastic runs"
+output: html_notebook
+---`
+
+Create a stochastic model for RTD
+```{r}
+RTD.b.d.rogue.onestep <- function (x, params) {
+  X <- x[2] # x[1] will be time
+  Y <- x[3]
+  Z <- x[4]
+  U <- x[5]
+  P <- X+Y+Z+U 
+  with(
+    as.list(params),
+    {
+      d1 <- d/(((1/e1)-(1/2))*g)  #g is gap between roguing #e is the efficiency of roguing #d is 0 or 1 representing if roguing is done or not
+      d2 <- d/(((1/e2)-(1/2))*g)
+      d3 <- d/(((1/e3)-(1/2))*g)
+      total.rate <- r*(K-P) + p1*(Y+s1*U)*X + p2*(Z+s2*U)*X + p5*U*X + p2*(Z+s2*U)*Y + m*Y + p1*(Y+s1*U)*Z + n*Z + w*U + q*X + d1*Y + d2*Z + d3*U   #every term, non-repeated
+      new.t <- rexp(n=1,rate=total.rate) #new timepoint is randomly selected with a exponential probability with the rate of total rate
+      new.xyzu<- c(X,Y,Z,U) #the first X Y Z U
+      Xadd <- r*(K-P) 
+      Zgone <- n*Z 
+      Ygone <- m*Y
+      Ugone <- w*U
+      XtoZ <- p2*(Z+s2*U)*X
+      XtoY <- p1*(Y+s1*U)*X
+      XtoU <- p5*U*X
+      YtoU <- p2*(Z+s2*U)*Y  
+      ZtoU <- p1*(Y+s1*U)*Z
+      Xgone <- q*X 
+      Yrogued <- d1*Y #new
+      Zrogued <- d2*Z #new
+      Urogued <- d3*U #new
+      realProbEvent <- c(Xadd,Zgone,Ygone,Ugone,XtoZ,XtoY,XtoU,YtoU,ZtoU,Xgone,Yrogued,Zrogued,Urogued)
+      e <- sample(x=1:13,size = 1,prob=realProbEvent) #e is a random number # 1:13
+      if(e == 1)
+        new.xyzu<- c(X+1,Y,Z,U)
+      if(e == 2)
+        new.xyzu<- c(X,Y,Z-1,U)
+      if(e == 3)
+        new.xyzu<- c(X,Y-1,Z,U)
+      if(e == 4)
+        new.xyzu<- c(X,Y,Z,U-1)
+      if(e == 5)
+        new.xyzu<- c(X-1,Y,Z+1,U)
+      if(e == 6)
+        new.xyzu<- c(X-1,Y+1,Z,U)
+      if(e == 7)
+        new.xyzu<- c(X-1,Y,Z,U+1)
+      if(e == 8)
+        new.xyzu<- c(X,Y-1,Z,U+1)
+      if(e == 9)
+        new.xyzu<- c(X,Y,Z-1,U+1)
+      if(e == 10)  
+        new.xyzu<- c(X-1,Y,Z,U) 
+      if(e == 11) #new 
+        new.xyzu<- c(X,Y-1,Z,U) 
+      if(e == 12) #new 
+        new.xyzu<- c(X,Y,Z-1,U) 
+      if(e == 13) #new 
+        new.xyzu<- c(X,Y,Z,U-1) 
+      c(new.t,new.xyzu)
+    }
+  )
+}
+
+RTD.b.d.rogue.model <- function (x, params, nstep, tmax) {
+  X <- array(dim=c(nstep+1,5))
+  colnames(X) <- c("time","X","Y","Z","U")
+  X[1,] <- x
+  t<-x[[1]]
+  k<-1
+  while (t<tmax){
+    X[k+1,] <- x <- RTD.b.d.rogue.onestep(x,params)
+    new.t <- x[1]
+    t<-t+new.t
+    k<-k+1
+  }
+  X
+}
+
+```
+
+Run both models
+```{r}
+library(tictoc)
+library(ggplot2)
+K<-10000
+nstep <- 6000000
+nsims<-10
+tmax<-500
+rand_p_range <- seq(0.08,0.16,0.01)
+rand_s_range <- seq(0.30,2.00,0.050)
+rand_start <- rbind(c(1000,1,1,0), c(1000,100,200,0),c(1000,200,100,0), c(1000,100,100,100), c(7500,100,100,100), c(7500,500,500,500))
+ncase <- 40
+rand_p<- vector(mode='list',length=ncase)
+rand_s<- vector(mode='list',length=ncase)
+compare135_dem<- vector(mode='list',length=ncase)
+compare135_sto<- vector(mode='list',length=ncase)
+compare135_para<-vector(mode='list',length=ncase)
+compareU<-0
+compareX<-0
+compareY<-0
+compareZ<-0
+compareP<-0
+
+for (com in 1:ncase){
+  tic("1 case used")
+  rand_p[[com]]<-sample(rand_p_range,3, replace = TRUE)
+  rand_s[[com]]<-sample(rand_s_range,2, replace = TRUE)
+  rand_ID<-sample(1:6,1)
+  X0<-rand_start[rand_ID,1]
+  Y0<-rand_start[rand_ID,2]
+  Z0<-rand_start[rand_ID,3]
+  U0<-rand_start[rand_ID,4]
+  
+  xstart_sto <- c(time=0,X=X0,Y=Y0,Z=Z0,U=U0)
+  xstart_det <- c(X=X0,Y=Y0,Z=Z0,U=U0)
+  rand_params<- c(K=K,r=0.001,p1=rand_p[[com]][1]/(K/9),p2=rand_p[[com]][2]/(K/9),p5=rand_p[[com]][3]/(K/9),s1=rand_s[[com]][1],s2=rand_s[[com]][2],q=0.0080,m=0.0125,n=0.0090,w=0.0250,d=0,e1=0.7,e2=0,e3=1,g=365)#notice d=0
+  
+  #stochas run
+  allRTDrv<- vector(mode='list',length=nsims)
+  for (a in 1:nsims) {
+  allRTDrv[[a]] <- as.data.frame(RTD.b.d.rogue.model(xstart_sto,rand_params,nstep, tmax))
+  allRTDrv[[a]]$cum.time <- cumsum(allRTDrv[[a]]$time)
+  }
+  B<- allRTDrv
+  timepoint<-0:tmax
+  EstXn <- data.frame(timepoint)
+  EstYn <- data.frame(timepoint)
+  EstZn <- data.frame(timepoint)
+  EstUn <- data.frame(timepoint)
+  EstPn <- data.frame(timepoint)
+  thisXr <- NULL
+  thisYr <- NULL
+  thisZr <- NULL
+  thisUr <- NULL
+  thisPr <- NULL
+  for (i in 1:nsims){
+  simXr<-B[[i]]$X
+  simYr<-B[[i]]$Y
+  simZr<-B[[i]]$Z
+  simUr<-B[[i]]$U
+  t<-B[[i]]$cum.time
+  for(j in 1:length(timepoint))
+  {
+    thisID <- max(which(t<=timepoint[j]))
+    # which(x<=timepoint[j]) will return the index of element in x that is less than each timepoint
+    # max() is added so we get only the closet x to each time point
+    thisPr[j] <- simXr[thisID]+simYr[thisID]+simZr[thisID]+simUr[thisID]
+    thisXr[j] <- simXr[thisID]
+    thisYr[j] <- simYr[thisID]
+    thisZr[j] <- simZr[thisID]
+    thisUr[j] <- simUr[thisID]
+    # at this point thisX is the value for simulation i at time j
+  }
+  EstXn<- cbind(EstXn, thisXr)
+  EstYn<- cbind(EstYn, thisYr)
+  EstZn<- cbind(EstZn, thisZr)
+  EstUn<- cbind(EstUn, thisUr)
+  EstPn <- cbind(EstPn, thisPr)
+  }
+  colnames(EstXn) <- c("timepoints",1:nsims)
+  colnames(EstYn) <- c("timepoints",1:nsims)
+  colnames(EstZn) <- c("timepoints",1:nsims)
+  colnames(EstUn) <- c("timepoints",1:nsims)
+  colnames(EstPn) <- c("timepoints",1:nsims)
+  MeanXn <-rowMeans(EstXn[,2:nsims+1])
+  MeanYn <-rowMeans(EstYn[,2:nsims+1])
+  MeanZn <-rowMeans(EstZn[,2:nsims+1])
+  MeanUn <-rowMeans(EstUn[,2:nsims+1])
+  MeanPn <-rowMeans(EstPn[,2:nsims+1])
+  sdXn<- NULL
+  sdYn<- NULL
+  sdZn<- NULL
+  sdUn<- NULL
+  sdPn <- NULL
+  for (k in 1:length(timepoint)){
+  sdXn<- c(sdXn,sd(EstXn[k,2:nsims+1]))
+  sdYn<- c(sdYn,sd(EstYn[k,2:nsims+1]))
+  sdZn<- c(sdZn,sd(EstZn[k,2:nsims+1]))
+  sdUn<- c(sdUn,sd(EstUn[k,2:nsims+1]))
+  sdPn<- c(sdPn,sd(EstPn[k,2:nsims+1]))
+  }
+  EstXn<-cbind(EstXn,MeanXn,sdXn)
+  EstYn<-cbind(EstYn,MeanYn,sdYn)
+  EstZn<-cbind(EstZn,MeanZn,sdZn)
+  EstUn<-cbind(EstUn,MeanUn,sdUn)
+  EstPn<-cbind(EstPn,MeanPn,sdPn)
+
+  #deterministic run
+  library(deSolve)
+  RTD.determin.withrogue.model <- function (t, x, params) {
+  X<- x[1] #susceptible
+  Y<- x[2] #infected by virus 1 (RTBV)
+  Z<- x[3] #infected by virus 2 (RTSV)
+  U<- x[4] #infected by both viruses #no need to define K
+  with(
+    as.list(params),
+    {
+      P<- Y+Z+U+X 
+      dX<- r*(K-P) - p1*(Y+s1*U)*X - p2*(Z+s2*U)*X - p5*U*X - q*X 
+      d1 <- d/(((1/e1)-(1/2))*g)  #g is gap between roguing #e is the efficiency of roguing
+      d2 <- d/(((1/e2)-(1/2))*g)
+      d3 <- d/(((1/e3)-(1/2))*g)
+      dY<- p1*(Y+s1*U)*X  - p2*(Z+s2*U)*Y - m*Y- d1*Y
+      dZ<- p2*(Z+s2*U)*X- p1*(Y+s1*U)*Z - n*Z - d2*Z 
+      dU<-  p2*(Z+s2*U)*Y  + p1*(Y+s1*U)*Z + p5*U*X -w*U - d3*U 
+      res<- c(dX,dY,dZ,dU)
+      list(res)
+    }
+  )
+  }
+  Determ_output<-NULL
+  times <- seq(0,500,by=1/2)
+  Determ_output <- as.data.frame(lsoda(xstart_det,times,RTD.determin.withrogue.model,rand_params))
+#out <- as.data.frame(lsoda(xstart,times,Zhangmodel,params))
+  Determ_output["P"]<- rowSums(Determ_output)-Determ_output["time"]
+  compare135_dem[[com]]<-Determ_output[which(Determ_output["time"]==135),2:6]
+  compareU<-EstUn[which(EstUn["timepoints"]==135),"MeanUn"]
+  compareX<-EstXn[which(EstXn["timepoints"]==135),"MeanXn"]
+  compareY<-EstYn[which(EstYn["timepoints"]==135),"MeanYn"]
+  compareZ<-EstZn[which(EstZn["timepoints"]==135),"MeanZn"]
+  compareP<-EstPn[which(EstPn["timepoints"]==135),"MeanPn"]
+  compare135_sto[[com]]<-cbind(compareX,compareY,compareZ,compareU,compareP)
+  compare135_para[[com]]<-c(rand_p[[com]],rand_s[[com]],rand_ID)
+  print(paste0("fin with case = ", com))
+  toc()
+}
+
+csvex_sto<-NULL
+csvex_det<-NULL
+csvex_para<-NULL
+for (da in 1:ncase){
+  csvex_sto<-rbind(csvex_sto,compare135_sto[[da]])
+  csvex_det<-rbind(csvex_det,compare135_dem[[da]])
+  csvex_para<-rbind(csvex_para,compare135_para[[da]])
+}
+
+
+csvex_sto<-data.frame(csvex_sto)
+csvex_para<-data.frame(csvex_para)
+csv_diff<-csvex_sto/csvex_det
+  #(abs(csvex_sto-csvex_det)/csvex_det)*100
+colnames(csvex_para)<-c("p1", "p2", "p5", "s1", "s2", "initials")
+csvex_para$X0<-rand_start[csvex_para$initials,1]
+csvex_para$Y0<-rand_start[csvex_para$initials,2]
+csvex_para$Z0<-rand_start[csvex_para$initials,3]
+csvex_para$U0<-rand_start[csvex_para$initials,4]
+csvex<-cbind(csvex_para,csv_diff)
+write.csv(csvex, "/Users/panareeboonyuen/Desktop/compareStoDet3.csv")
+```
+
+
+```{r import data for plotting}
+library(scales)
+csvex2<-read.csv(file = "/Users/panareeboonyuen/Desktop/compareStoDet2.csv")
+
+ggplot()+
+  geom_histogram(data=csvex2, mapping = aes(x=compareU), col= "black",fill = "blue", alpha=0.5)+
+  geom_vline(aes(xintercept = 1), col = "red")+
+  theme_bw()+
+  labs(x = "Stochastic U135/Deterministic U135", y = "Percentage of simulations")+
+  scale_x_continuous(breaks = c(0.0,0.2,0.4,0.6,0.8,1.0,1.2))
+
+ggplot()+
+  geom_histogram(data=csvex2, mapping = aes(x=compareZ), col= "black",bins = 30, fill = "forest green", alpha=0.5)+
+  geom_vline(aes(xintercept = 1), col = "red")+
+  theme_bw()+
+  labs(x = "Stochastic Z135/Deterministic Z135", y = "Percentage of simulations")
+    #+stat_bin(bins = 30,geom= "text", mapping =aes(y=..count.., label=..count..), position=position_stack(vjust = 0.5), col = "black")
+  
+ggplot()+
+  geom_histogram(data=csvex2, mapping = aes(x=compareX), col= "black",bins = 30, fill = "grey", alpha=0.5)+
+  geom_vline(aes(xintercept = 1), col = "red")+
+  theme_bw()+
+  labs(x = "Stochastic X135/Deterministic X135", y = "Percentage of simulations")
+
+ggplot()+
+  geom_histogram(data=csvex2, mapping = aes(x=compareY), col= "black",bins = 30, fill = "red", alpha=0.5)+
+  geom_vline(aes(xintercept = 1), col = "red")+
+  theme_bw()+
+  labs(x = "Stochastic Y135/Deterministic Y135", y = "Percentage of simulations")
+
+ggplot()+
+  geom_histogram(data=csvex2, mapping = aes(x=compareP), col= "black",bins = 30, fill = "white", alpha=0.5)+
+  geom_vline(aes(xintercept = 1), col = "red")+
+  theme_bw()+
+  labs(x = "Stochastic P135/Deterministic P135", y = "Percentage of simulations")
+
+##all
+ggplot()+
+  geom_histogram(data=csvex2, mapping = aes(x=compareU), col= "black", fill = "blue",binwidth=1)+
+  geom_vline(aes(xintercept = 1), col = "red")+
+  theme_bw()+
+  labs(x = "Stochastic abundance/Deterministic abundance", y = "Number of simulations")+
+  #scale_x_continuous(breaks = c(0.0,0.2,0.4,0.6,0.8,1.0,1.2))+
+  
+  geom_histogram(data=csvex2, mapping = aes(x=compareX), col= "black", fill = "grey",binwidth=1,alpha = 0.5)+
+  geom_histogram(data=csvex2, mapping = aes(x=compareY), col= "black", fill = "red",binwidth=1, alpha = 0.5)+
+  geom_histogram(data=csvex2, mapping = aes(x=compareZ), col= "black", fill = "forest green",binwidth=1, alpha = 0.5)+
+  xlim(0.5,1.5)
+
+
+
+colors2 <- c("compareX"= "black", "compareY"= "red", "compareZ"="forestgreen", "compareU"="blue")
+#after trying many plots -> this is for Fig 3A
+ggplot(data=csvex2)+theme_bw() +
+  geom_point(aes(x=initials, y=compareX), size=2, shape=16, col="black", alpha=0.5, position = "jitter")+
+  geom_point(aes(x=initials, y=compareU), size=2.3, shape=18, col="blue", alpha=0.5, position = "jitter")+
+  geom_point(aes(x=initials, y=compareY), size=1.9, shape=17, col="red", alpha=0.5, position = "jitter")+
+  geom_point(aes(x=initials, y=compareZ), size=1.9, shape=15, col="forest green", alpha=0.5, position = "jitter")+
+  ylim(0.5, 1.5)+
+  scale_x_discrete(limit = factor(c(1,2,3,4,5,6)))+
+  #scale_y_continuous(breaks = c(0.25,0.5,0.75,1.0,1.25,1.50))+
+  #scale_y_continuous(breaks = c(0,10,20,30,40,50,60))+
+  #scale_color_manual(name="Host compartment", values=colors2, labels=c("X", "Y", "Z", "U"))+
+  labs(x= "Set of initial conditions", y ="Stochastic abundance / Deterministic abundance ratio",colour = "Compartment")+scale_color_manual(values = colors2)+
+  theme(axis.text.x=element_text(size=10))
+
+#try to find no. of cases -> Fig 3B
+inrange<-filter(csvex2, compareU<=1.5,compareU>=0.5,compareX<=1.5,compareX>=0.5,compareY<=1.5,compareY>=0.5,compareZ<=1.5,compareZ>=0.5) #78 obs have all U,X,Y,Z within 0.5-1.5 times
+outrange<-filter(csvex2, compareU>1.5,compareU<0.5,compareX>1.5,compareX<0.5,compareY>1.5,compareY<0.5,compareZ>1.5,compareZ<0.5) #non of them produce all 4 out-orf-range values
+outrangeU<-filter(csvex2, compareU<0.5) #only 4 percents give less than 0.5% are okay
+outrangeZ<-filter(csvex2, compareZ>1.5) #14 give Z more than, the rest are okay
+outrangeX<-filter(csvex2, compareX>1.5) #9 give X more than, the rest are okay
+outrangeY<-filter(csvex2, compareY>1.5) #11 give Y more than, the rest are okay
+outrangeXYZ<-filter(csvex2, compareY>1.5,compareZ>1.5,compareX>1.5)
+outrangeP<-filter(csvex2, compareP<0.5) #non of them produce 
+book2<-read.csv(file = "/Users/panareeboonyuen/Desktop/Book2.csv")
+ggplot(data=book2)+
+  geom_bar(stat="identity", aes(y=different, x=host, fill = host), col="black")+
+  geom_text(aes(y=different, x=host,label=different), vjust = -0.25, col = "black", size=3)+
+  scale_fill_manual(labels =c("Susceptible (X)", "RTBV-infected (Y)", "RTSV-infected (Z)", "RTBV/RTSV co-infected (U)"),name = "Host compartment",values=c("X"="black","Y"="red","Z"="forestgreen","U"="blue"))+
+  theme_bw()+
+  scale_x_discrete(limits = c("X", "Y", "Z", "U"))+
+  labs(y="Percentage of simulations")+
+  theme(legend.position="bottom")
+
+
+
+```
+
